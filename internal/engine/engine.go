@@ -389,6 +389,11 @@ func (p *prepared) addAdhoc(ctx context.Context) error {
 			for _, x := range paths {
 				c.Scope = append(c.Scope, contracts.EscapeGlob(x))
 			}
+			// The code around a change usually decides whether it holds:
+			// read what the changed files import and what imports them,
+			// within most of the state budget.
+			budget := p.trusted.Config.Limits.MaxStateBytes * 3 / 4
+			c.Context = append(c.Context, evidence.Related(ctx, p.snap, paths, budget)...)
 		}
 		p.adhoc = append(p.adhoc, c)
 		p.selected[c.ID] = "adhoc"

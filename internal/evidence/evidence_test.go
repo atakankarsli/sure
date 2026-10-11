@@ -221,3 +221,27 @@ func TestDigestIgnoresStagingAndSeesDeletions(t *testing.T) {
 		t.Fatal("a deleted file is still part of the snapshot")
 	}
 }
+
+func TestRelatedFollowsImportsBothWays(t *testing.T) {
+	s := FromFiles("worktree", "", map[string][]byte{
+		"src/a.ts":         []byte("import { b } from './b';\nimport type { C } from \"../src/c.js\";\nconst d = require('./lib');\n"),
+		"src/b.ts":         []byte("export const b = 1;\n"),
+		"src/c.ts":         []byte("export type C = number;\n"),
+		"src/lib/index.ts": []byte("export const d = 1;\n"),
+		"src/uses-a.tsx":   []byte("import { a } from './a';\n"),
+		"src/far.ts":       []byte("import { b } from './b';\n"),
+		"src/big.ts":       []byte("import { a } from './a';\n" + strings.Repeat("// x\n", 400)),
+		"app/views.py":     []byte("from .models import Order\nfrom ..shared.util import helper\n"),
+		"app/models.py":    []byte("class Order: pass\n"),
+		"shared/util.py":   []byte("def helper(): pass\n"),
+	}, nil)
+	ctx := context.Background()
+	got := Related(ctx, s, []string{"src/a.ts"}, 400)
+	want := []string{"src/b.ts", "src/c.ts", "src/lib/index.ts", "src/uses-a.tsx"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("related = %v, want %v (big.ts must not fit the budget, far.ts is two hops away)", got, want)
+	}
+	if py := s.Imports(ctx, "app/views.py"); !reflect.DeepEqual(py, []string{"app/models.py", "shared/util.py"}) {
+		t.Fatalf("python imports = %v", py)
+	}
+}

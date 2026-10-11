@@ -725,8 +725,12 @@ func TestAdhocChecksReadChangedFiles(t *testing.T) {
 			ce = c
 		}
 	}
-	if !ce.Adhoc || len(ce.Files) != 1 || ce.Files[0].Path != "src/features/checkout/finish.ts" {
-		t.Fatalf("ad-hoc evidence: %+v", ce)
+	var read []string
+	for _, f := range ce.Files {
+		read = append(read, f.Role+":"+f.Path)
+	}
+	if !ce.Adhoc || strings.Join(read, ",") != "scope:src/features/checkout/finish.ts,context:src/domain/cart.ts,context:src/domain/orders.ts" {
+		t.Fatalf("ad-hoc evidence should be the change plus its imports: %v", read)
 	}
 	v := verdicts(r)
 	if v["adhoc/ADHOC-001"] != "violated/source_conflicts_with_requirement" || r.ExitCode != report.ExitViolation {
