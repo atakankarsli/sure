@@ -1,58 +1,39 @@
 # Plan
 
-Milestones follow brief §17, adjusted by `docs/adr/0001-foundation.md`. Update this file as work lands.
+Milestones follow brief §17, adjusted by `docs/adr/0001-foundation.md`. The evaluation milestones (fixture app, 40-case corpus, measurement, repair episodes) belong to the separate evaluation repository.
 
 ## M0 — Inspect and document ✅ (2026-10-11)
 
-- [x] Handoff read in full; kept verbatim in `docs/handoff/`.
-- [x] ADC template read at `origin/main` `0d954e7`: AGENTS.md, go.mod, main.go, cmd/, registry, Makefile, .goreleaser.yml.
-- [x] Jev wire checked: TypeSafe docs, plus Vercel gateway catalog and probes (`docs/research/jev-wire.md`).
-- [x] Decisions recorded in ADR 0001.
-- [x] Repository created; private remote `atakankarsli/sure`.
-- [ ] Gateway live response shape. Blocked until the Vercel team has a credit card.
+Handoff read and kept in `docs/handoff/`; ADC template read at `origin/main` `0d954e7`; Jev wire checked against TypeSafe docs and the gateway; ADR 0001; private remote.
 
-## M1 — Offline runnable slice
+## M1 — Offline vertical slice ✅ (2026-10-11)
 
-- CLI shell adapted from ADC: `main.go`, `cmd/`, registry, shared output/errors, `cmdtest`, Makefile, pre-commit hook, CI.
-- `sure --help`, `--version`, `init`, `contracts validate`.
-- Strict contract reader: frontmatter validation, check headings, rejection of unknown and duplicate keys, bad globs, unsafe paths.
-- Whole-file evidence collector with byte budgets, deterministic order, hashes, missing-file reporting.
-- Fake provider, run-result schema validation, exit-code mapping.
-- `sure check` against a tiny `testdata/` fixture with deterministic fake answers.
-- A test proving the target application is never executed.
+- CLI adapted from ADC: `init`, `contracts validate`, `plan`, `check`, `doctor`, `schema`, `version`; grouped help; injected writers and dependencies.
+- Strict contract grammar and config validation; trusted-vs-working-tree diff.
+- Snapshot capture of allowlisted bytes, whole-file evidence bundles, regions for localization, byte and token budgets.
+- Fake provider; JSON output validated against `schemas/run-result.schema.json`; exit-code precedence.
+- Tests prove the target is never executed (scripts, Makefile, fsmonitor and diff drivers stay untouched).
 
-## M2 — Real Jev and safe snapshots
+## M2 — Real providers and safe snapshots ✅ (2026-10-11), live Jev pending
 
-- `gateway` transport first, then `typesafe`. Strict response validation; missing fields are errors.
-- Deadlines, bounded worker pool, shared backoff with `Retry-After`, no retries on 4xx validation or auth errors.
-- Cache keyed by normalized request, endpoint, model, prompt and policy versions, contract hash and evidence; replay provider.
-- Git snapshot of the worktree, `--changed` with `--base` merge base, renames and deletions, unmapped changes.
-- Trusted contracts from the base ref; `contract_changes`.
-- Request and response fixtures from the first live calls.
+- Jev over the Vercel gateway (`/v1/evaluate`, upstream pinned to `typesafe-ai`) and TypeSafe direct; Claude (`claude-haiku-5-5`) through the official Go SDK with structured output.
+- Strict response validation, retries with `Retry-After` and a shared backoff gate, deadlines, redirects refused.
+- Content-addressed cache, `--record` / `--provider replay`.
+- `--changed` with merge base, renames, deletions, untracked files, unmapped changes, plan invalidation by dependency manifests and contract edits; `--assess-base` regression labelling.
+- Visual manifest parsing and the `unsupported_evidence_kind` outcome.
+- Live trial (Claude Haiku 5.5, 2026-10-11, demo repo in a scratch folder): the clean baseline gave 1 supported and 2 unknown (`low_confidence`, p≈0.80–0.85); a cart-clearing bug in the failure branch came back `violated` (p=0.93) on the right function, exit 1. Two runs, about 9.7k input tokens in total. This is a smoke test, not a measurement.
 
-## M3 — Fixture app and corpus (`eval/`)
+## M5 — Release-ready development artifacts ✅ (local only)
 
-- `eval/app`: small Next.js shop from the official `with-vitest` example, exact pinned dependencies and lockfile, pinned Node and package manager.
-- Plain TypeScript domain (catalog, cart, checkout, orders) with injected time and services.
-- Independent Vitest oracles; optional small Playwright suite.
-- 10–12 contracts accepted and committed before any mutation.
-- 40 cases from `docs/handoff/CASE_MATRIX.md`, opaque IDs, frozen dev/holdout splits.
+README, AGENTS.md, skill, schema, Makefile, pre-commit hook, CI (format, vet, race tests, CGO-free cross-build), GoReleaser with releases disabled.
 
-## M4 — Measurement and repair demo
+## Next
 
-- Pilot run with the live key and an agreed budget, then 5 uncached repetitions on the frozen semantic split.
-- Inspect dev-split errors, freeze prompts, then run holdout once.
-- One preserved-behavior refactor and one bug → Sure finding → agent repair → oracle-confirmed recovery episode, at most 3 iterations.
-- Honest report, including poor results.
+- **Live Jev:** add a credit card to the Vercel team, then run `sure doctor --live`. Confirm the gateway's response shape, whether `providerOptions` pinning is honored, and the returned model; record request/response fixtures.
+- **Evaluation repository:** fixture shop, independent oracles, 40 cases, frozen splits, measured precision/recall per provider. Only then tune the policy thresholds.
+- **Claude calibration:** Haiku's self-reported probabilities sit just under the 0.90 threshold on correct code. Do not lower the threshold before the evaluation repository measures it; try `effort: medium` first.
 
-## M5 — Release-ready development artifacts
+## Open questions
 
-README, skill, schemas, CI, CGO-free build check, changelog, local GoReleaser snapshot. Nothing is published without the owner.
-
-## Blockers and open questions
-
-- **Live calls:** the Vercel team needs a credit card on file. The gateway returns `403 customer_verification_required` until then.
-- **Live budget:** not agreed yet. At $0.042 per million input tokens the full corpus with 5 repetitions is estimated well under $1. Proposed cap: $5.
-- **Upstream pinning:** route gateway calls only to the `typesafe-ai` upstream (ZDR) before sending real source.
-- **Model pinning through the gateway:** unknown; see `docs/research/jev-wire.md`.
-- **Markdown parsing:** a restricted grammar or a parser; decide in M1.
+- Live budget for the evaluation runs (Jev is $0.042 per million input tokens; Haiku 5.5 is $0.10/$0.50).
+- Whether a Jev version can be pinned through the gateway.
