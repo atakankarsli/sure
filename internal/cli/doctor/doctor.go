@@ -119,8 +119,7 @@ func diagnose(ctx context.Context, deps shared.Deps, dir, provName string, live 
 		}
 	}
 
-	spec := engine.ProviderSpec{Name: contracts.DefaultProviderName, Transport: contracts.DefaultJevTransport,
-		BaseURL: deps.Getenv("SURE_PROVIDER_BASE_URL")}
+	spec := engine.ProviderSpec{Name: contracts.DefaultProviderName, BaseURL: deps.Getenv("SURE_PROVIDER_BASE_URL")}
 	if cfg != nil {
 		spec.Name, spec.Transport, spec.Model, spec.Effort = cfg.Provider.Name, cfg.Provider.Transport, cfg.Provider.Model, cfg.Provider.Effort
 	}
@@ -133,7 +132,7 @@ func diagnose(ctx context.Context, deps shared.Deps, dir, provName string, live 
 		return exit
 	}
 	add("provider", ok, fmt.Sprintf("%s/%s model %s at %s (%s probabilities)", id.Name, id.Transport, id.Model, id.Endpoint, id.ProbabilitySource))
-	keyEnv := shared.KeyEnv(spec)
+	keyEnv := shared.KeyEnvFor(id)
 	if deps.Getenv(keyEnv) == "" {
 		add("api_key", bad, keyEnv+" is not set")
 	} else {

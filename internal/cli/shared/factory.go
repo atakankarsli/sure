@@ -22,8 +22,20 @@ type ProviderFactory struct {
 // a provider built with it is never called.
 const identityKey = "identity-only"
 
+// resolve picks the Jev transport when the config leaves it open: the gateway
+// when its key is set, TypeSafe directly when only that key is set.
+func (f ProviderFactory) resolve(spec engine.ProviderSpec) engine.ProviderSpec {
+	if spec.Name == provider.NameJev && spec.Transport == "" {
+		spec.Transport = jev.TransportGateway
+		if f.Getenv(jev.KeyEnvGateway) == "" && f.Getenv(jev.KeyEnvTypeSafe) != "" {
+			spec.Transport = jev.TransportTypeSafe
+		}
+	}
+	return spec
+}
+
 func (f ProviderFactory) Identity(spec engine.ProviderSpec) (provider.Identity, error) {
-	p, err := f.build(spec, identityKey)
+	p, err := f.build(f.resolve(spec), identityKey)
 	if err != nil {
 		return provider.Identity{}, err
 	}
@@ -31,6 +43,7 @@ func (f ProviderFactory) Identity(spec engine.ProviderSpec) (provider.Identity, 
 }
 
 func (f ProviderFactory) New(spec engine.ProviderSpec) (provider.Provider, error) {
+	spec = f.resolve(spec)
 	env := KeyEnv(spec)
 	if env == "" {
 		return nil, fmt.Errorf("unknown provider %q", spec.Name)
@@ -40,6 +53,11 @@ func (f ProviderFactory) New(spec engine.ProviderSpec) (provider.Provider, error
 		return nil, provider.Errorf(provider.ErrMissingKey, "set %s in the environment", env)
 	}
 	return f.build(spec, key)
+}
+
+// KeyEnvFor names the key variable a resolved provider identity reads.
+func KeyEnvFor(id provider.Identity) string {
+	return KeyEnv(engine.ProviderSpec{Name: id.Name, Transport: id.Transport})
 }
 
 // KeyEnv names the environment variable that holds the key for a provider.

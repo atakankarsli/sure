@@ -121,7 +121,7 @@ func TestParseConfigDefaults(t *testing.T) {
 	if len(issues) != 0 {
 		t.Fatal(issues)
 	}
-	if cfg.Contracts != DefaultDir || cfg.Provider.Name != "jev" || cfg.Provider.Transport != "gateway" ||
+	if cfg.Contracts != DefaultDir || cfg.Provider.Name != "jev" || cfg.Provider.Transport != "" ||
 		cfg.Limits.Concurrency != 4 || cfg.Policy.MinSelectedProbability != 0.90 || cfg.Policy.MinProbabilityMargin != 0.20 {
 		t.Fatalf("defaults: %+v", cfg)
 	}

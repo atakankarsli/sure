@@ -33,7 +33,6 @@ const (
 	DefaultMinMargin          = 0.20
 	DefaultMinLocation        = 0.50
 	DefaultProviderName       = "jev"
-	DefaultJevTransport       = "gateway"
 	AnthropicTransport        = "messages"
 )
 
@@ -211,10 +210,9 @@ func ParseConfig(file string, data []byte) (Config, []Issue) {
 		cfg.Provider.Name = DefaultProviderName
 		fallthrough
 	case "jev":
+		// An empty transport is chosen at run time from whichever key is set.
 		switch cfg.Provider.Transport {
-		case "":
-			cfg.Provider.Transport = DefaultJevTransport
-		case "gateway", "typesafe":
+		case "", "gateway", "typesafe":
 		default:
 			add(0, "invalid_config", "provider.transport %q is not gateway or typesafe", cfg.Provider.Transport)
 		}

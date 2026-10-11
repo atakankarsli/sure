@@ -40,10 +40,10 @@ exclude:
   - "**/coverage/**"
   - "**/vendor/**"
 provider:
-  # jev (transport gateway or typesafe) or anthropic. Keys come from the
-  # environment only: AI_GATEWAY_API_KEY, TYPESAFE_API_KEY or SURE_ANTHROPIC_API_KEY.
+  # jev or anthropic. Jev runs through the Vercel AI Gateway when
+  # AI_GATEWAY_API_KEY is set, else directly with TYPESAFE_API_KEY; pin it with
+  # transport: gateway | typesafe. Claude reads SURE_ANTHROPIC_API_KEY.
   name: jev
-  transport: gateway
 limits:
   concurrency: 4
   max_file_bytes: 262144
