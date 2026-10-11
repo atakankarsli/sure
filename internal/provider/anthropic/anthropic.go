@@ -424,8 +424,10 @@ func decode(req provider.Request, m *sdk.Message) (provider.Response, error) {
 			if item == nil || item.Option == nil || item.Probability == nil {
 				return malformed("answer %q has an incomplete probability entry", id)
 			}
-			if _, dup := probs[*item.Option]; dup {
-				return malformed("answer %q lists option %q twice", id, *item.Option)
+			// A repeated option keeps its larger self-reported value; the
+			// distribution is rescaled below.
+			if prev, dup := probs[*item.Option]; dup && prev >= *item.Probability {
+				continue
 			}
 			probs[*item.Option] = *item.Probability
 		}

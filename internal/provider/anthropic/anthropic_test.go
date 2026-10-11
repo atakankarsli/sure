@@ -225,8 +225,6 @@ func TestIdentityAndConfig(t *testing.T) {
 
 func TestMalformedOutputs(t *testing.T) {
 	cases := map[string]string{
-		"duplicate option": message(`{"answers":{"q001_assess":{"probabilities":[{"option":"supported","probability":0.5},{"option":"supported","probability":0.4},{"option":"unknown","probability":0.1}]},`+
-			`"q001_locate":{"probabilities":[{"option":"R001","probability":0.7},{"option":"NONE","probability":0.3}]}}}`, "end_turn"),
 		"sum far from one": message(`{"answers":{"q001_assess":{"probabilities":[{"option":"supported","probability":0.3},{"option":"violated","probability":0.2}]},`+
 			`"q001_locate":{"probabilities":[{"option":"R001","probability":0.7},{"option":"NONE","probability":0.3}]}}}`, "end_turn"),
 		"unoffered option": message(`{"answers":{"q001_assess":{"probabilities":[{"option":"maybe","probability":1}]},`+
@@ -408,6 +406,16 @@ func TestSelfReportedProbabilitiesAreCompletedAndRescaled(t *testing.T) {
 		t.Fatalf("assess %+v", a.Probabilities)
 	}
 	if l := resp.Answers["q001_locate"]; l.Choice != "R001" || l.Probabilities["NONE"] != 0 {
+		t.Fatalf("locate %+v", l)
+	}
+
+	body = message(`{"answers":{"q001_assess":{"probabilities":[{"option":"supported","probability":0.2},{"option":"supported","probability":0.6},{"option":"violated","probability":0.4}]},`+
+		`"q001_locate":{"probabilities":[{"option":"R001","probability":1}]}}}`, "end_turn")
+	resp, err = p.Evaluate(context.Background(), testRequest())
+	if err != nil || math.Abs(resp.Answers["q001_assess"].Probabilities["supported"]-0.6) > 1e-9 {
+		t.Fatalf("repeated option keeps the larger value: %v %+v", err, resp.Answers["q001_assess"])
+	}
+	if l := resp.Answers["q001_locate"]; l.Choice != "R001" {
 		t.Fatalf("locate %+v", l)
 	}
 }
