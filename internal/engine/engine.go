@@ -425,7 +425,11 @@ func (p *prepared) planEvidence(ctx context.Context) error {
 			p.plans = append(p.plans, cp)
 			continue
 		}
-		cp.bundle = evidence.Collect(p.snap, cfg, c)
+		bundle, err := evidence.Collect(ctx, p.snap, cfg, c)
+		if err != nil {
+			return contextFailure(ctx, err)
+		}
+		cp.bundle = bundle
 		switch {
 		case c.Evidence == contracts.EvidenceImage:
 			cp.preset = visualOutcome(ctx, manifest, manifestErr, c, p)

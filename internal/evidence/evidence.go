@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -39,98 +40,171 @@ const (
 	ReasonUnread   = "unreadable"
 )
 
-// Snapshot holds the bytes of every allowlisted file, read once, so the
-// model, digests and locations all describe the same content.
+// Snapshot identifies every allowlisted file once, at the start of a run, and
+// reads content only for files that evidence needs. Unchanged tracked files
+// are identified by the blob ID Git already has; changed and untracked files
+// are read and hashed up front. Every file is read at most once, so the model,
+// digests and locations describe the same bytes.
 type Snapshot struct {
-	Kind    string
-	Ref     string
-	Files   map[string][]byte
-	Skipped map[string]string
+	Kind string
+	Ref  string
+
+	src     gitview.Source
+	maxFile int64
+	entries map[string]gitview.Entry
 	paths   []string
 	digest  string
+
+	mu      sync.Mutex
+	content map[string][]byte
+	skipped map[string]string
+	loaded  int
 }
 
-// Capture reads every file the config allows from src.
+// Capture inventories every file the config allows from src.
 func Capture(ctx context.Context, src gitview.Source, cfg contracts.Config) (*Snapshot, error) {
-	all, err := src.List(ctx)
+	inv, err := src.Inventory(ctx)
 	if err != nil {
 		return nil, err
 	}
-	s := &Snapshot{Kind: "worktree", Files: map[string][]byte{}, Skipped: map[string]string{}}
+	s := &Snapshot{Kind: "worktree", src: src, maxFile: cfg.Limits.MaxFileBytes,
+		entries: map[string]gitview.Entry{}, content: map[string][]byte{}, skipped: map[string]string{}}
 	if d := src.Describe(); d != "worktree" {
 		s.Kind, s.Ref = "commit", d
 	}
-	total := 0
-	for _, p := range all {
-		if !cfg.Allowed(p) {
+	for _, e := range inv {
+		if !cfg.Allowed(e.Path) {
 			continue
 		}
-		if len(s.Files)+len(s.Skipped) >= MaxSnapshotFiles {
+		if len(s.entries) >= MaxSnapshotFiles {
 			return nil, fmt.Errorf("source_roots select more than %d files; narrow them", MaxSnapshotFiles)
 		}
-		b, err := src.Read(ctx, p, cfg.Limits.MaxFileBytes)
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-			s.Skipped[p] = readReason(err)
-			continue
-		}
-		if !isText(b) {
-			s.Skipped[p] = ReasonBinary
-			continue
-		}
-		total += len(b)
-		if total > MaxSnapshotBytes {
-			return nil, fmt.Errorf("source_roots hold more than %d bytes of text; narrow them", MaxSnapshotBytes)
-		}
-		s.Files[p] = b
+		s.entries[e.Path] = e
 	}
-	s.finish()
+	format := src.ObjectFormat(ctx)
+	h := sha256.New()
+	for _, p := range sortedKeys(s.entries) {
+		e := s.entries[p]
+		id := e.Blob
+		if id == "" {
+			b, reason, err := s.load(ctx, p)
+			if err != nil {
+				return nil, err
+			}
+			switch reason {
+			case ReasonNotFound:
+				delete(s.entries, p)
+				continue
+			case "":
+				id = gitview.BlobID(format, b)
+			default:
+				id = "skipped:" + reason
+			}
+		} else if e.Symlink {
+			id = "skipped:" + ReasonSymlink
+		}
+		s.paths = append(s.paths, p)
+		fmt.Fprintf(h, "%s\x00%s\n", p, id)
+	}
+	s.digest = hex.EncodeToString(h.Sum(nil))
 	return s, nil
 }
 
-// FromFiles builds a snapshot from known content; used for tests and for
-// base-commit reassessment.
+// FromFiles builds a snapshot from known content; used for tests.
 func FromFiles(kind, ref string, files map[string][]byte, skipped map[string]string) *Snapshot {
-	s := &Snapshot{Kind: kind, Ref: ref, Files: files, Skipped: skipped}
-	if s.Skipped == nil {
-		s.Skipped = map[string]string{}
-	}
-	s.finish()
-	return s
-}
-
-func (s *Snapshot) finish() {
-	s.paths = s.paths[:0]
-	for p := range s.Files {
-		s.paths = append(s.paths, p)
-	}
-	sort.Strings(s.paths)
+	s := &Snapshot{Kind: kind, Ref: ref, entries: map[string]gitview.Entry{}, content: map[string][]byte{}, skipped: map[string]string{}}
 	h := sha256.New()
-	keys := make([]string, 0, len(s.Files)+len(s.Skipped))
-	for p := range s.Files {
-		keys = append(keys, p)
+	all := map[string]bool{}
+	for p, b := range files {
+		all[p] = true
+		s.content[p] = b
 	}
-	for p := range s.Skipped {
-		keys = append(keys, p)
+	for p, r := range skipped {
+		all[p] = true
+		s.skipped[p] = r
 	}
-	sort.Strings(keys)
-	for _, p := range keys {
-		if b, ok := s.Files[p]; ok {
-			fmt.Fprintf(h, "%s\x00%s\n", p, Hash(b))
+	for _, p := range sortedKeys(all) {
+		s.entries[p] = gitview.Entry{Path: p}
+		s.paths = append(s.paths, p)
+		if b, ok := files[p]; ok {
+			fmt.Fprintf(h, "%s\x00%s\n", p, gitview.BlobID("sha1", b))
 		} else {
-			fmt.Fprintf(h, "%s\x00skipped:%s\n", p, s.Skipped[p])
+			fmt.Fprintf(h, "%s\x00skipped:%s\n", p, skipped[p])
 		}
 	}
 	s.digest = hex.EncodeToString(h.Sum(nil))
+	return s
 }
 
-// Digest identifies the captured source, including skipped entries.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// load returns a file's bytes, or the reason it cannot be evidence. Content
+// is cached so a file is read at most once per run.
+func (s *Snapshot) load(ctx context.Context, p string) ([]byte, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if b, ok := s.content[p]; ok {
+		return b, "", nil
+	}
+	if r, ok := s.skipped[p]; ok {
+		return nil, r, nil
+	}
+	e, ok := s.entries[p]
+	switch {
+	case !ok:
+		return nil, ReasonNotFound, nil
+	case e.Symlink:
+		s.skipped[p] = ReasonSymlink
+		return nil, ReasonSymlink, nil
+	case s.src == nil:
+		return nil, ReasonNotFound, nil
+	}
+	b, err := s.src.Read(ctx, p, s.maxFile)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, "", ctx.Err()
+		}
+		r := readReason(err)
+		s.skipped[p] = r
+		return nil, r, nil
+	}
+	if !isText(b) {
+		s.skipped[p] = ReasonBinary
+		return nil, ReasonBinary, nil
+	}
+	s.loaded += len(b)
+	if s.loaded > MaxSnapshotBytes {
+		return nil, "", fmt.Errorf("evidence needs more than %d bytes of source; narrow source_roots or scopes", MaxSnapshotBytes)
+	}
+	s.content[p] = b
+	return b, "", nil
+}
+
+// Digest identifies the allowlisted source, including unreadable entries.
 func (s *Snapshot) Digest() string { return s.digest }
 
-// Paths returns the readable files in sorted order.
+// Paths returns every allowlisted file in sorted order, readable or not.
 func (s *Snapshot) Paths() []string { return s.paths }
+
+// Has reports whether a path is an allowlisted file of the snapshot.
+func (s *Snapshot) Has(p string) bool {
+	_, ok := s.entries[p]
+	return ok
+}
+
+// LoadedBytes is how much source content the run has read so far.
+func (s *Snapshot) LoadedBytes() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loaded
+}
 
 func Hash(b []byte) string {
 	sum := sha256.Sum256(b)
@@ -209,7 +283,7 @@ const (
 // Collect selects every allowed file matching the contract's scope plus its
 // explicit context files. A context file that cannot be supplied is Missing;
 // a scope match that cannot be read is Skipped.
-func Collect(s *Snapshot, cfg contracts.Config, c contracts.Contract) Bundle {
+func Collect(ctx context.Context, s *Snapshot, cfg contracts.Config, c contracts.Contract) (Bundle, error) {
 	b := Bundle{Files: []File{}, Missing: []Missing{}, Skipped: []Missing{}}
 	inScope := func(p string) bool {
 		for _, g := range c.Scope {
@@ -219,47 +293,46 @@ func Collect(s *Snapshot, cfg contracts.Config, c contracts.Contract) Bundle {
 		}
 		return false
 	}
+	roles := map[string]string{}
 	var paths []string
 	for _, p := range s.paths {
-		if inScope(p) {
-			paths = append(paths, p)
+		if !inScope(p) {
+			continue
 		}
-	}
-	var skipped []string
-	for p := range s.Skipped {
-		if inScope(p) {
-			skipped = append(skipped, p)
+		_, reason, err := s.load(ctx, p)
+		if err != nil {
+			return b, err
 		}
-	}
-	sort.Strings(skipped)
-	for _, p := range skipped {
-		b.Skipped = append(b.Skipped, Missing{Path: p, Reason: s.Skipped[p]})
-	}
-	roles := map[string]string{}
-	for _, p := range paths {
+		if reason != "" {
+			b.Skipped = append(b.Skipped, Missing{Path: p, Reason: reason})
+			continue
+		}
 		roles[p] = RoleScope
+		paths = append(paths, p)
 	}
 	var context []string
 	for _, p := range c.Context {
 		if _, ok := roles[p]; ok {
 			continue
 		}
-		if _, ok := s.Files[p]; ok {
-			roles[p] = RoleContext
-			context = append(context, p)
+		if !cfg.Allowed(p) {
+			b.Missing = append(b.Missing, Missing{Path: p, Reason: ReasonExcluded})
 			continue
 		}
-		reason := ReasonNotFound
-		if r, ok := s.Skipped[p]; ok {
-			reason = r
-		} else if !cfg.Allowed(p) {
-			reason = ReasonExcluded
+		_, reason, err := s.load(ctx, p)
+		if err != nil {
+			return b, err
 		}
-		b.Missing = append(b.Missing, Missing{Path: p, Reason: reason})
+		if reason != "" {
+			b.Missing = append(b.Missing, Missing{Path: p, Reason: reason})
+			continue
+		}
+		roles[p] = RoleContext
+		context = append(context, p)
 	}
 	sort.Strings(context)
 	for i, p := range append(paths, context...) {
-		content := s.Files[p]
+		content, _, _ := s.load(ctx, p)
 		b.Files = append(b.Files, File{
 			ID:      fmt.Sprintf("F%03d", i+1),
 			Path:    p,
@@ -271,7 +344,7 @@ func Collect(s *Snapshot, cfg contracts.Config, c contracts.Contract) Bundle {
 		})
 	}
 	b.Regions = regions(b.Files)
-	return b
+	return b, nil
 }
 
 func lineCount(b []byte) int {

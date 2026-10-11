@@ -7,6 +7,9 @@ package gitview
 import (
 	"bytes"
 	"context"
+	"crypto/sha1"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +20,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 var (
@@ -35,6 +39,9 @@ type Repo struct {
 	Root   string
 	IsGit  bool
 	gitBin string
+
+	formatOnce sync.Once
+	format     string
 }
 
 // Open resolves dir to its repository root. A directory outside Git still
@@ -297,8 +304,126 @@ func CleanRel(p string) (string, error) {
 // Source is a read-only view of files: the working tree or a commit.
 type Source interface {
 	List(ctx context.Context) ([]string, error)
+	// Inventory lists files with the object ID Git already has for their
+	// current content, so unchanged files need not be read to be identified.
+	Inventory(ctx context.Context) ([]Entry, error)
 	Read(ctx context.Context, rel string, maxBytes int64) ([]byte, error)
 	Describe() string
+	// ObjectFormat is the hash Git uses for blob IDs ("sha1" or "sha256").
+	ObjectFormat(ctx context.Context) string
+}
+
+// Entry is one file in an inventory. Blob is empty when the content differs
+// from what Git has recorded (or there is no Git), so the caller must hash it.
+type Entry struct {
+	Path    string
+	Blob    string
+	Symlink bool
+}
+
+// BlobID computes Git's object ID for content, matching IDs from the index.
+func BlobID(format string, content []byte) string {
+	header := fmt.Sprintf("blob %d\x00", len(content))
+	if format == "sha256" {
+		h := sha256.New()
+		h.Write([]byte(header))
+		h.Write(content)
+		return hex.EncodeToString(h.Sum(nil))
+	}
+	h := sha1.New()
+	h.Write([]byte(header))
+	h.Write(content)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func (r *Repo) objectFormat(ctx context.Context) string {
+	if !r.IsGit {
+		return "sha1"
+	}
+	r.formatOnce.Do(func() {
+		r.format = "sha1"
+		if out, err := r.run(ctx, "rev-parse", "--show-object-format"); err == nil && strings.TrimSpace(string(out)) == "sha256" {
+			r.format = "sha256"
+		}
+	})
+	return r.format
+}
+
+func (w worktree) ObjectFormat(ctx context.Context) string { return w.r.objectFormat(ctx) }
+
+func (t tree) ObjectFormat(ctx context.Context) string { return t.r.objectFormat(ctx) }
+
+// Inventory reads the index for tracked files and marks the ones whose
+// working-tree content differs, and all untracked files, for hashing.
+func (w worktree) Inventory(ctx context.Context) ([]Entry, error) {
+	if !w.r.IsGit {
+		files, err := w.List(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]Entry, len(files))
+		for i, f := range files {
+			out[i] = Entry{Path: f}
+		}
+		return out, nil
+	}
+	staged, err := w.r.run(ctx, "ls-files", "--stage", "-z")
+	if err != nil {
+		return nil, err
+	}
+	dirty, err := w.r.run(ctx, "diff-files", "--name-only", "-z", "--no-ext-diff", "--ignore-submodules=all")
+	if err != nil {
+		return nil, err
+	}
+	changed := map[string]bool{}
+	for _, p := range splitZ(dirty) {
+		changed[p] = true
+	}
+	entries := map[string]Entry{}
+	for _, rec := range splitZ(staged) {
+		meta, p, ok := strings.Cut(rec, "\t")
+		f := strings.Fields(meta)
+		if !ok || len(f) != 3 || f[0] == "160000" {
+			continue
+		}
+		e := Entry{Path: p, Symlink: f[0] == "120000"}
+		if f[2] == "0" && !changed[p] {
+			e.Blob = f[1]
+		}
+		entries[p] = e
+	}
+	others, err := w.r.run(ctx, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range splitZ(others) {
+		entries[p] = Entry{Path: p}
+	}
+	out := make([]Entry, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out, nil
+}
+
+// Inventory lists a commit's files with their blob IDs.
+func (t tree) Inventory(ctx context.Context) ([]Entry, error) {
+	out, err := t.r.run(ctx, "ls-tree", "-r", "-z", "--full-tree", "--end-of-options", t.commit)
+	if err != nil {
+		return nil, err
+	}
+	var entries []Entry
+	for _, rec := range splitZ(out) {
+		meta, p, ok := strings.Cut(rec, "\t")
+		f := strings.Fields(meta)
+		if !ok || len(f) != 3 || f[1] != "blob" {
+			continue
+		}
+		entries = append(entries, Entry{Path: p, Blob: f[2], Symlink: f[0] == "120000"})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
+	return entries, nil
 }
 
 func (r *Repo) Worktree() Source { return worktree{r} }

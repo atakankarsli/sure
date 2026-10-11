@@ -28,6 +28,7 @@ func repo(t *testing.T, files map[string]string) (string, gitview.Source) {
 	t.Helper()
 	dir := testutil.NewRepo(t)
 	testutil.WriteFiles(t, dir, files)
+	testutil.Commit(t, dir, "base")
 	r, err := gitview.Open(context.Background(), dir)
 	if err != nil {
 		t.Fatal(err)
@@ -50,11 +51,19 @@ func TestCaptureAllowlistsBeforeAnythingElse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := s.Paths(); !reflect.DeepEqual(got, []string{"src/a.ts"}) {
-		t.Fatalf("captured %v", got)
+	if got := s.Paths(); !reflect.DeepEqual(got, []string{"src/a.ts", "src/big.ts", "src/img.png"}) {
+		t.Fatalf("inventory %v", got)
 	}
-	if s.Skipped["src/big.ts"] != ReasonTooLarge || s.Skipped["src/img.png"] != ReasonBinary {
-		t.Fatalf("skipped %v", s.Skipped)
+	if s.LoadedBytes() != 0 {
+		t.Fatalf("an unchanged committed tree must not be read up front; read %d bytes", s.LoadedBytes())
+	}
+	b, err := Collect(context.Background(), s, cfg, contracts.Contract{Scope: []string{"src/**"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Files) != 1 || b.Files[0].Path != "src/a.ts" ||
+		!reflect.DeepEqual(b.Skipped, []Missing{{Path: "src/big.ts", Reason: ReasonTooLarge}, {Path: "src/img.png", Reason: ReasonBinary}}) {
+		t.Fatalf("collected %+v skipped %+v", b.Files, b.Skipped)
 	}
 	before := s.Digest()
 
@@ -84,7 +93,7 @@ func TestCollectOrdersScopeThenContextAndReportsGaps(t *testing.T) {
 		Scope:   []string{"src/features/checkout/**"},
 		Context: []string{"src/domain/orders.ts", "src/domain/cart.ts", "src/domain/missing.ts", "src/features/checkout/api.ts"},
 	}
-	b := Collect(s, cfg, c)
+	b, _ := Collect(context.Background(), s, cfg, c)
 	var got []string
 	for _, f := range b.Files {
 		got = append(got, f.ID+" "+f.Role+" "+f.Path)
@@ -105,7 +114,7 @@ func TestCollectOrdersScopeThenContextAndReportsGaps(t *testing.T) {
 		t.Fatalf("skipped %v", b.Skipped)
 	}
 
-	empty := Collect(s, cfg, contracts.Contract{ID: "x", Scope: []string{"src/nothing/**"}})
+	empty, _ := Collect(context.Background(), s, cfg, contracts.Contract{ID: "x", Scope: []string{"src/nothing/**"}})
 	if len(empty.Files) != 0 || len(empty.Missing) != 0 {
 		t.Fatalf("empty scope collected %v", empty)
 	}
@@ -113,7 +122,7 @@ func TestCollectOrdersScopeThenContextAndReportsGaps(t *testing.T) {
 
 func TestRegionsSplitTopLevelBlocks(t *testing.T) {
 	src := "import { x } from './x';\n\nexport function a() {\n  return 1;\n\n  // inner blank line stays\n}\n\nexport function b() {\n  return 2;\n}\n"
-	b := Collect(FromFiles("worktree", "", map[string][]byte{"src/a.ts": []byte(src)}, nil),
+	b, _ := Collect(context.Background(), FromFiles("worktree", "", map[string][]byte{"src/a.ts": []byte(src)}, nil),
 		config(t, ""), contracts.Contract{Scope: []string{"src/**"}})
 	var got []string
 	for _, r := range b.Regions {
@@ -180,5 +189,35 @@ func TestVisualManifest(t *testing.T) {
 		if _, err := ParseVisualManifest([]byte(bad)); err == nil {
 			t.Errorf("accepted bad manifest %s", bad)
 		}
+	}
+}
+
+func TestDigestIgnoresStagingAndSeesDeletions(t *testing.T) {
+	dir, src := repo(t, map[string]string{"src/a.ts": "a\n", "src/b.ts": "b\n"})
+	cfg := config(t, "")
+	digest := func() string {
+		s, err := Capture(context.Background(), src, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s.Digest()
+	}
+	clean := digest()
+	testutil.Write(t, dir, "src/a.ts", "changed\n")
+	unstaged := digest()
+	testutil.Git(t, dir, "add", "src/a.ts")
+	if staged := digest(); staged != unstaged || staged == clean {
+		t.Fatalf("staging changed the digest of identical content (%s vs %s)", staged, unstaged)
+	}
+	testutil.Git(t, dir, "commit", "-qm", "a")
+	if committed := digest(); committed != unstaged {
+		t.Fatal("committing changed the digest of identical content")
+	}
+	if err := os.Remove(filepath.Join(dir, "src/b.ts")); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := Capture(context.Background(), src, cfg)
+	if s.Has("src/b.ts") || s.Digest() == unstaged {
+		t.Fatal("a deleted file is still part of the snapshot")
 	}
 }

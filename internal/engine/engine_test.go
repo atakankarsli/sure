@@ -114,9 +114,16 @@ func decider(q provider.Question, req provider.Request) provider.Answer {
 	cartReq := strings.Contains(instr["requirement"], "cart items")
 	if strings.HasSuffix(q.ID, "_locate") {
 		if buggy && cartReq {
-			for _, o := range q.Options {
-				if strings.Contains(o.Description, "export function finishCheckout") {
-					return fake.Answer(q, o.Name, 0.9)
+			var st struct {
+				Regions []struct {
+					ID         string `json:"id"`
+					StartsWith string `json:"starts_with"`
+				} `json:"regions"`
+			}
+			_ = json.Unmarshal(req.State, &st)
+			for _, r := range st.Regions {
+				if strings.Contains(r.StartsWith, "export function finishCheckout") {
+					return fake.Answer(q, r.ID, 0.9)
 				}
 			}
 		}

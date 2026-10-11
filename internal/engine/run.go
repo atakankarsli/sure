@@ -318,8 +318,8 @@ func assessBase(ctx context.Context, p *prepared, prov provider.Provider, curren
 				return out
 			}
 		}
-		b := evidence.Collect(baseSnap, cfg, cp.c)
-		if len(b.Missing) > 0 || len(b.Files) == 0 {
+		b, err := evidence.Collect(ctx, baseSnap, cfg, cp.c)
+		if err != nil || len(b.Missing) > 0 || len(b.Files) == 0 {
 			continue
 		}
 		req, err := buildRequest(cp.c, b, cfg.Limits)
