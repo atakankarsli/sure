@@ -16,11 +16,3 @@ coverage.html
 .sure/cache/
 .sure/recordings/
 /reports/
-
-# eval module
-eval/app/node_modules/
-eval/app/.next/
-eval/app/coverage/
-eval/app/test-results/
-eval/app/playwright-report/
-eval/runs/
