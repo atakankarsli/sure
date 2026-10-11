@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -162,7 +163,7 @@ func (p *Provider) Identity() provider.Identity {
 		Transport:         "messages",
 		Endpoint:          p.endpoint,
 		Model:             p.model,
-		WireFormat:        "anthropic-json-v1",
+		WireFormat:        "anthropic-json-v2",
 		ProbabilitySource: provider.ProbabilitySelfReported,
 	}
 }
@@ -428,6 +429,10 @@ func decode(req provider.Request, m *sdk.Message) (provider.Response, error) {
 			}
 			probs[*item.Option] = *item.Probability
 		}
+		probs, err := normalize(q, probs)
+		if err != nil {
+			return malformed("answer %q: %v", id, err)
+		}
 		answers[id] = provider.Answer{Choice: provider.ArgMax(q, probs), Probabilities: probs}
 	}
 	if err := provider.ValidateAnswers(req, answers); err != nil {
@@ -442,4 +447,36 @@ func decode(req provider.Request, m *sdk.Message) (provider.Response, error) {
 		},
 		Source: provider.SourceLive,
 	}, nil
+}
+
+// selfReportedSlack is how far a self-reported distribution may stray from 1
+// before it is rejected rather than rescaled.
+const selfReportedSlack = 0.15
+
+// normalize turns a language model's self-reported probabilities into a
+// complete distribution: options it left out get 0, and a total near 1 is
+// rescaled to exactly 1. Totals far from 1 and unknown options are rejected.
+func normalize(q provider.Question, probs map[string]float64) (map[string]float64, error) {
+	known := make(map[string]bool, len(q.Options))
+	for _, o := range q.Options {
+		known[o.Name] = true
+	}
+	sum := 0.0
+	for opt, v := range probs {
+		if !known[opt] {
+			return nil, fmt.Errorf("option %q is not offered", opt)
+		}
+		if math.IsNaN(v) || v < 0 || v > 1 {
+			return nil, fmt.Errorf("probability for %q out of range: %v", opt, v)
+		}
+		sum += v
+	}
+	if sum == 0 || math.Abs(sum-1) > selfReportedSlack {
+		return nil, fmt.Errorf("probabilities sum to %.2f", sum)
+	}
+	out := make(map[string]float64, len(q.Options))
+	for _, o := range q.Options {
+		out[o.Name] = probs[o.Name] / sum
+	}
+	return out, nil
 }

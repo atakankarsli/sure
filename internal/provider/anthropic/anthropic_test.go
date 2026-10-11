@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -203,7 +204,7 @@ func TestIdentityAndConfig(t *testing.T) {
 	}
 	want := provider.Identity{
 		Name: provider.NameAnthropic, Transport: "messages", Endpoint: DefaultBaseURL + "/v1/messages",
-		Model: DefaultModel, WireFormat: "anthropic-json-v1", ProbabilitySource: provider.ProbabilitySelfReported,
+		Model: DefaultModel, WireFormat: "anthropic-json-v2", ProbabilitySource: provider.ProbabilitySelfReported,
 	}
 	if got := p.Identity(); got != want {
 		t.Fatalf("identity = %+v", got)
@@ -226,7 +227,9 @@ func TestMalformedOutputs(t *testing.T) {
 	cases := map[string]string{
 		"duplicate option": message(`{"answers":{"q001_assess":{"probabilities":[{"option":"supported","probability":0.5},{"option":"supported","probability":0.4},{"option":"unknown","probability":0.1}]},`+
 			`"q001_locate":{"probabilities":[{"option":"R001","probability":0.7},{"option":"NONE","probability":0.3}]}}}`, "end_turn"),
-		"missing option": message(`{"answers":{"q001_assess":{"probabilities":[{"option":"supported","probability":0.5},{"option":"violated","probability":0.5}]},`+
+		"sum far from one": message(`{"answers":{"q001_assess":{"probabilities":[{"option":"supported","probability":0.3},{"option":"violated","probability":0.2}]},`+
+			`"q001_locate":{"probabilities":[{"option":"R001","probability":0.7},{"option":"NONE","probability":0.3}]}}}`, "end_turn"),
+		"unoffered option": message(`{"answers":{"q001_assess":{"probabilities":[{"option":"maybe","probability":1}]},`+
 			`"q001_locate":{"probabilities":[{"option":"R001","probability":0.7},{"option":"NONE","probability":0.3}]}}}`, "end_turn"),
 		"missing question": message(`{"answers":{"q001_assess":{"probabilities":[{"option":"supported","probability":0.05},{"option":"violated","probability":0.9},{"option":"unknown","probability":0.05}]}}}`, "end_turn"),
 		"unknown question": message(strings.Replace(goodAnswers, `}}}`, `},"q9":{"probabilities":[]}}}`, 1), "end_turn"),
@@ -384,5 +387,27 @@ func TestCancellation(t *testing.T) {
 	ccancel()
 	if _, err := p.Evaluate(cctx, testRequest()); kindOf(t, err) != provider.ErrCanceled {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestSelfReportedProbabilitiesAreCompletedAndRescaled(t *testing.T) {
+	body := message(`{"answers":{"q001_assess":{"probabilities":[{"option":"supported","probability":0.52},{"option":"violated","probability":0.52}]},`+
+		`"q001_locate":{"probabilities":[{"option":"R001","probability":1}]}}}`, "end_turn")
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, body)
+	}))
+	defer s.Close()
+	p := newTestProvider(t, s.URL, nil)
+	resp, err := p.Evaluate(context.Background(), testRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := resp.Answers["q001_assess"]
+	if a.Probabilities["unknown"] != 0 || math.Abs(a.Probabilities["supported"]-0.5) > 1e-9 {
+		t.Fatalf("assess %+v", a.Probabilities)
+	}
+	if l := resp.Answers["q001_locate"]; l.Choice != "R001" || l.Probabilities["NONE"] != 0 {
+		t.Fatalf("locate %+v", l)
 	}
 }
