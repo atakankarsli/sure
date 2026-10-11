@@ -1,0 +1,26 @@
+/sure
+/dist/
+/worktrees/
+coverage.out
+coverage.html
+*.test
+*.prof
+.DS_Store
+.idea/
+.vscode/
+
+# secrets
+.env*
+
+# local Sure state, never committed
+.sure/cache/
+.sure/recordings/
+/reports/
+
+# eval module
+eval/app/node_modules/
+eval/app/.next/
+eval/app/coverage/
+eval/app/test-results/
+eval/app/playwright-report/
+eval/runs/

@@ -1,0 +1,149 @@
+{
+  "schema_version": "sure.run/v1",
+  "example_only": true,
+  "run_id": "example-only-not-executed",
+  "status": "completed",
+  "gate": "violated",
+  "exit_code": 1,
+  "snapshot": {
+    "kind": "worktree",
+    "base_ref": "main",
+    "source_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+    "scope": "contract",
+    "application_executed": false
+  },
+  "trust": {
+    "mode": "protected",
+    "contracts_ref": "main",
+    "contract_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+    "policy_version": "experimental-v1"
+  },
+  "provider": {
+    "name": "fake",
+    "requested_model": "jev-1.13.0",
+    "returned_model": null,
+    "mode": "fake",
+    "prompt_version": "assessment-v1",
+    "usage": {
+      "requests": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_hits": 0
+    }
+  },
+  "summary": {
+    "total": 3,
+    "selected": 3,
+    "evaluated": 3,
+    "supported": 2,
+    "violated": 1,
+    "unknown": 0,
+    "error": 0,
+    "not_checked": 0
+  },
+  "checks": [
+    {
+      "id": "checkout.failure/CHK-001",
+      "verdict": "violated",
+      "severity": "error",
+      "requirement": "Given a non-empty cart, when order submission resolves with an error, existing cart items and quantities must remain unchanged.",
+      "reason_code": "source_conflicts_with_requirement",
+      "message": "The model flags a possible conflict with this requirement. Inspect the selected source region.",
+      "message_origin": "template",
+      "analysis_level": "text-scoped",
+      "probabilities": {
+        "supported": 0.02,
+        "violated": 0.95,
+        "unknown": 0.03
+      },
+      "model_confidence": null,
+      "locations": [
+        {
+          "path": "src/features/checkout/finish.ts",
+          "start_line": 5,
+          "end_line": 8,
+          "role": "model_selected",
+          "excerpt": "  if (!result.ok) {\n    cart.items = [];\n    ui.submitting = false;\n    return;"
+        }
+      ],
+      "next_actions": [
+        {
+          "kind": "inspect_source",
+          "path": "src/features/checkout/finish.ts",
+          "start_line": 5,
+          "end_line": 8
+        },
+        {
+          "kind": "recheck",
+          "argv": [
+            "sure",
+            "check",
+            "--repo",
+            ".",
+            "--contract",
+            "checkout.failure",
+            "--contracts-ref",
+            "main",
+            "--output",
+            "json"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "checkout.failure/CHK-002",
+      "verdict": "supported",
+      "severity": "error",
+      "requirement": "When order submission fails, the application must not transition to the order-success state.",
+      "reason_code": "source_supports_requirement",
+      "message": "The supplied source supports this requirement within the recorded scope.",
+      "message_origin": "template",
+      "analysis_level": "text-scoped",
+      "probabilities": {
+        "supported": 0.96,
+        "violated": 0.01,
+        "unknown": 0.03
+      },
+      "model_confidence": null,
+      "locations": [
+        {
+          "path": "src/features/checkout/finish.ts",
+          "start_line": 5,
+          "end_line": 8,
+          "role": "inspected",
+          "excerpt": "  if (!result.ok) {\n    cart.items = [];\n    ui.submitting = false;\n    return;"
+        }
+      ],
+      "next_actions": []
+    },
+    {
+      "id": "checkout.failure/CHK-003",
+      "verdict": "supported",
+      "severity": "error",
+      "requirement": "After a failed submission settles, submitting must become false so the customer can retry.",
+      "reason_code": "source_supports_requirement",
+      "message": "The supplied source supports this requirement within the recorded scope.",
+      "message_origin": "template",
+      "analysis_level": "text-scoped",
+      "probabilities": {
+        "supported": 0.96,
+        "violated": 0.01,
+        "unknown": 0.03
+      },
+      "model_confidence": null,
+      "locations": [
+        {
+          "path": "src/features/checkout/finish.ts",
+          "start_line": 5,
+          "end_line": 8,
+          "role": "inspected",
+          "excerpt": "  if (!result.ok) {\n    cart.items = [];\n    ui.submitting = false;\n    return;"
+        }
+      ],
+      "next_actions": []
+    }
+  ],
+  "errors": [],
+  "unmapped_changes": [],
+  "contract_changes": []
+}

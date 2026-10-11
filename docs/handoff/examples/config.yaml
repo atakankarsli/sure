@@ -1,0 +1,31 @@
+schema_version: sure.config/v1
+contracts: .sure/contracts
+source_roots:
+  - src
+exclude:
+  - "**/*.test.*"
+  - "**/*.spec.*"
+  - "**/__tests__/**"
+  - "node_modules/**"
+  - ".next/**"
+  - "oracle/**"
+  - "eval/**"
+  - "reports/**"
+  - ".git/**"
+  - ".env*"
+  - "**/.env*"
+provider:
+  name: jev
+  model: jev-1.13.0
+  key_env: TYPESAFE_API_KEY
+limits:
+  concurrency: 4
+  max_state_bytes: 16384
+  max_request_bytes: 24576
+policy:
+  version: experimental-v1
+  min_selected_probability: 0.90
+  min_probability_margin: 0.20
+# These are proposed uncalibrated defaults, not provider guarantees.
+# The endpoint is not repository-configurable. Trusted user config/environment
+# may provide an approved enterprise endpoint; test dependencies inject httptest.

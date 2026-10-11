@@ -1,0 +1,19 @@
+Build Sure, following the attached INITIAL_AGENT_BRIEF.md. The executable and product name are sure. This is a Go implementation, not a TypeScript CLI and not an application E2E runner.
+
+First inspect my supplied local Go CLI template. An accessible researched reference is atakankarsli/adc: ffcli/v3, cmd/run.go, command registry, shared output/errors, make targets, and CGO-free GoReleaser builds. Prefer the actual local template if it differs. Reuse its structure, not its Apple-specific code. Do not modify or publish ADC.
+
+Create two separate local repositories/directories: sure (the CLI) and sure-eval (a small deterministic Next.js shop based on the official with-vitest setup). Do not create remote repositories, push, publish packages, or install a global sure executable unless I separately authorize it.
+
+Sure's core flow is English feature contracts -> changed-source selection -> bounded source evidence -> TypeSafe Jev -> versioned JSON diagnostics for another coding agent. sure check must never build/run the target application, run tests, browse, execute an agent, or edit source. Its configured provider may receive explicitly selected source. Start with direct Jev HTTP and a fake/replay provider; I will supply TYPESAFE_API_KEY locally when ready.
+
+Read the handoff's RESEARCH_NOTES.md, CASE_MATRIX.md, example contract/config/request/result, and run-result schema. Treat all example scores as synthetic, not measured. Confirm current Jev wire shapes before coding. Jev does not generate explanation text or accept images: build diagnostics from fixed templates, immutable requirements, and real source locations. Missing answers must not decode into successful zero values. Unknown and service failure are not pass.
+
+Begin with a small CGO-free file-scoped collector and explicit contract scope/context; do not spend the first iteration building language servers, a vector database, an autonomous test agent, or a dashboard. Make incomplete coverage visible. Use trusted baseline contracts, handle uncommitted bytes, and invalidate cache when any relevant source or requirement changes.
+
+Build offline tests first, including HTTP protocol validation, JSON-only stdout, exit codes, Git snapshots, path safety, missing context, cache invalidation, and contract tampering. Then implement the clean app and its independent oracle. The oracle tests, expected labels, patches, and case names must never enter Sure's model evidence. Sure evaluates first; the separate harness runs the application oracle to measure the verdict.
+
+Implement the 40-case matrix with both real regressions and harmless refactors. Freeze dev/holdout splits and do not tune on holdout. Measure model quality with correct evidence separately from whole-pipeline quality. Add an agent repair episode format capped at three iterations, with checker/contracts/oracle protected from edits. Reserve the visual manifest interface; with Jev-only v0, visual judgments stay unknown/unsupported.
+
+Finish the offline vertical slice even without a key. When a key and explicit API budget are available, run and record the live pilot; otherwise report live evaluation as unmeasured. Never fabricate a benchmark, API recording, screenshot verdict, or successful repair.
+
+Follow the implementation milestones and stop only with a runnable, tested handoff or explicit concrete blockers. Return local repo paths, actual commands run, tests/results, dependencies and source revisions, known limitations, and live/offline status. Keep commits small and focused when local commits are needed for baselines. Do not weaken a contract or oracle to make the checker green.
