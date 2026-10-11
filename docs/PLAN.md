@@ -9,23 +9,27 @@
 - **Speed:** unchanged tracked files are identified by Git blob IDs and read only when they become evidence; the region table goes once per request.
 - **Evaluation repo** (`sure-eval`): fixture shop, 19 independent Vitest oracles, 40 cases validated without any model, and a harness with a contract track and an ad-hoc track.
 
-## Measured (Claude Haiku 5.5, effort low, one run each; not calibrated, not Jev)
+## Measured (one run each, 2026-10-11; not calibrated)
 
-| Track | Split | Violations caught | Wrongly cleared | Safe checks cleared | False alarms | Time |
+Jev `jev-1.13.0` called directly through TypeSafe, against Claude Haiku 5.5 at effort low:
+
+| Track | Provider | Violations caught | Wrongly cleared | Safe checks cleared | False alarms | Time |
 |---|---|---|---|---|---|---|
-| contracts | dev (20) | 11/12 | 0 | 49/59 | 0 | 20.6 s, p50 5.6 s/case |
-| contracts | holdout (10) | 5/6 | 0 | 33/36 | 0 | 12.1 s |
-| ad-hoc, diff only | dev (20) | 6/12 | 0 | 13/59 | 0 | 21.9 s |
-| ad-hoc, diff + imports | dev (20) | 8/12 | 0 | 33/59 | 0 | 24.4 s |
-| software (incomplete + trust) | 10 | — | — | 27/27 assertions | — | 6.7 s |
+| contracts, dev + holdout | Jev | 13/18 | **2** | 88/95 | 0 | 40 cases 7.4 s, p50 0.9 s/case |
+| contracts, dev + holdout | Haiku | 16/18 | 0 | 82/95 | 0 | 30 cases 33 s, p50 5.6 s/case |
+| ad-hoc (diff + imports), dev | Jev | 7/12 | 1 | 39/59 | 0 | 3.2 s |
+| ad-hoc (diff + imports), holdout | Jev | 1/6 | 1 | 16/36 | 0 | 2.0 s |
+| ad-hoc (diff + imports), dev | Haiku | 8/12 | 0 | 33/59 | 0 | 24.4 s |
+| software (incomplete + trust) | either | — | — | 27/27 assertions | — | under 7 s |
 
-Every miss so far is "not sure", never a wrong answer. Haiku's self-reported probabilities sit just under 90% on correct code. One holdout case failed on a format error (a repeated option), since fixed. Holdout results were not used to tune anything.
+Jev is about six times faster and clears more safe code. Its misses are confident, though. It cleared both CHK-003 mutants (C003, C015, P(supported) 0.94–0.95): a removed `submitting: false` that object spread keeps true. In the ad-hoc track it also cleared C010 (stock taken inside the validation loop, 0.98). TypeSafe's jaggedness notes list indirection as a known weakness. Haiku's misses were all "not sure" and in the right direction (0.85–0.88 on contracts), but its numbers are self-reported and cluster at round values. Holdout results were not used to tune anything.
 
 The eval found and fixed one real bug: `sure <contract>` used to trust HEAD, so a contract weakened on a feature branch was believed. Trusted contracts now come from the merge base in every mode.
 
 ## Next
 
-- **Jev live:** add a card to the Vercel team, then `sure doctor --live` and `npm run eval -- --split all --provider jev` in `sure-eval`. Compare against the table above.
+- **Jev through the gateway:** works directly with `TYPESAFE_API_KEY` today; the gateway route still needs a card on the Vercel team.
+- **Indirection misses:** on the dev split only, try question wording that asks the model to follow each field to its final value on the failure path, and measure CHK-003 again. Consider a second opinion (Claude) for checks Jev clears below 0.97.
 - **Policy:** after the Jev run, decide the threshold per provider from the dev split only.
 - **Evidence:** import following covers TS/JS and Python; add Go and Swift if those repos need ad-hoc checks.
 - **Repair episodes:** the brief's agent repair demo (bug → Sure finding → agent fix → oracle) is not built yet.
