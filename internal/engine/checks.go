@@ -14,6 +14,9 @@ import (
 // chosen label's probability and its margin over the runner-up clear the
 // thresholds; everything else is unknown.
 func decide(pol contracts.Policy, a provider.Answer) (verdict, reason string, prob float64) {
+	if a.Refused {
+		return report.VerdictUnknown, "model_refused", 0
+	}
 	choice := provider.ArgMax(provider.Question{Options: assessOptions}, a.Probabilities)
 	p := a.Probabilities[choice]
 	runner := 0.0
@@ -98,6 +101,12 @@ func fillDecision(out *report.Check, p *prepared, cp contractPlan, resp provider
 	a := resp.Answers[cp.req.assessIDs[i]]
 	verdict, reason, prob := decide(pol, a)
 	out.Verdict, out.ReasonCode = verdict, reason
+	if a.Refused {
+		out.Confidence = report.Ptr(0.0)
+		out.Message = "The decision model declined to answer this question."
+		out.NextActions = append(out.NextActions, recheck(p, cp.c.ID))
+		return
+	}
 	out.Confidence = report.Ptr(a.Probabilities[LabelSupported])
 	out.Probabilities = &report.Probabilities{
 		Supported: a.Probabilities[LabelSupported],
@@ -155,7 +164,7 @@ func locate(cp contractPlan, resp provider.Response, i int, pol contracts.Policy
 		return evidence.Region{}, false
 	}
 	a, ok := resp.Answers[cp.req.locateIDs[i]]
-	if !ok || a.Choice == RegionNone || a.Probabilities[a.Choice] < pol.MinLocationProbability {
+	if !ok || a.Refused || a.Choice == RegionNone || a.Probabilities[a.Choice] < pol.MinLocationProbability {
 		return evidence.Region{}, false
 	}
 	for _, r := range cp.bundle.Regions {

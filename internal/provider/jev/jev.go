@@ -22,7 +22,9 @@ const (
 	TransportGateway  = "gateway"
 	TransportTypeSafe = "typesafe"
 
-	DefaultGatewayURL  = "https://ai-gateway.vercel.sh/v1/evaluate"
+	// DefaultGatewayURL is the decision-model route the AI SDK's gateway
+	// provider uses (spec v4); the model travels in the ai-model-id header.
+	DefaultGatewayURL  = "https://ai-gateway.vercel.sh/v4/ai/decision-model"
 	DefaultTypeSafeURL = "https://api.typesafe.ai/v1/systemone"
 
 	DefaultGatewayModel  = "typesafe-ai/jev"
@@ -64,7 +66,7 @@ func New(cfg Config) (*Provider, error) {
 	var defURL, defModel, keyEnv, wire string
 	switch cfg.Transport {
 	case TransportGateway:
-		defURL, defModel, keyEnv, wire = DefaultGatewayURL, DefaultGatewayModel, KeyEnvGateway, "jev-gateway-v1"
+		defURL, defModel, keyEnv, wire = DefaultGatewayURL, DefaultGatewayModel, KeyEnvGateway, "jev-gateway-v4"
 	case TransportTypeSafe:
 		defURL, defModel, keyEnv, wire = DefaultTypeSafeURL, DefaultTypeSafeModel, KeyEnvTypeSafe, "jev-typesafe-v1"
 	default:
@@ -143,18 +145,28 @@ func (p *Provider) Identity() provider.Identity {
 
 // Body renders the exact wire body for a request. Questions keep request order
 // and criteria keep option order, because Jev can be sensitive to option order.
+// An empty option description is sent as null.
 func Body(transport, model string, req provider.Request) ([]byte, error) {
 	if len(req.Questions) == 0 {
 		return nil, errors.New("request has no questions")
 	}
 	var b bytes.Buffer
-	b.WriteString(`{"model":`)
-	writeString(&b, model)
-	b.WriteString(`,"state":`)
-	if err := compact(&b, req.State); err != nil {
-		return nil, fmt.Errorf("state: %w", err)
+	if transport == TransportGateway {
+		b.WriteString(`{"stateParts":[{"type":"json","value":`)
+		if err := compact(&b, req.State); err != nil {
+			return nil, fmt.Errorf("state: %w", err)
+		}
+		b.WriteString(`}],"questions":`)
+	} else {
+		b.WriteString(`{"model":`)
+		writeString(&b, model)
+		b.WriteString(`,"state":`)
+		if err := compact(&b, req.State); err != nil {
+			return nil, fmt.Errorf("state: %w", err)
+		}
+		b.WriteString(`,"questions":`)
 	}
-	b.WriteString(`,"questions":{`)
+	b.WriteByte('{')
 	seen := map[string]bool{}
 	for i, q := range req.Questions {
 		if q.ID == "" || seen[q.ID] {
@@ -184,7 +196,11 @@ func Body(transport, model string, req provider.Request) ([]byte, error) {
 			}
 			writeString(&b, o.Name)
 			b.WriteByte(':')
-			writeString(&b, o.Description)
+			if o.Description == "" {
+				b.WriteString("null")
+			} else {
+				writeString(&b, o.Description)
+			}
 		}
 		b.WriteString(`}}`)
 	}
@@ -232,6 +248,12 @@ func (p *Provider) send(ctx context.Context, req provider.Request, body []byte) 
 	hreq.Header.Set("Content-Type", "application/json")
 	hreq.Header.Set("Accept", "application/json")
 	hreq.Header.Set("User-Agent", p.userAgent)
+	if p.transport == TransportGateway {
+		hreq.Header.Set("ai-gateway-protocol-version", "0.0.1")
+		hreq.Header.Set("ai-gateway-auth-method", "api-key")
+		hreq.Header.Set("ai-decision-model-specification-version", "4")
+		hreq.Header.Set("ai-model-id", p.model)
+	}
 
 	resp, err := p.hc.Do(hreq)
 	if err != nil {
@@ -291,6 +313,9 @@ type wireUsage struct {
 }
 
 func (p *Provider) decode(req provider.Request, raw []byte) (provider.Response, error) {
+	if p.transport == TransportGateway {
+		return p.decodeGateway(req, raw)
+	}
 	malformed := func(format string, args ...any) (provider.Response, error) {
 		return provider.Response{}, provider.Errorf(provider.ErrMalformed, format, args...)
 	}
@@ -351,6 +376,87 @@ func (p *Provider) decode(req provider.Request, raw []byte) (provider.Response, 
 		Usage:   provider.Usage{InputTokens: int(*w.Usage.InputTokens), OutputTokens: int(*w.Usage.OutputTokens)},
 		Source:  provider.SourceLive,
 	}, nil
+}
+
+// gatewayResponse follows the AI SDK decision model v4 result that the
+// gateway returns: distributions and usage are optional there, but Sure needs
+// a distribution for every choice it accepts.
+type gatewayResponse struct {
+	Answers map[string]*gatewayAnswer `json:"answers"`
+	Model   *string                   `json:"model"`
+	Usage   *struct {
+		InputTokens  *float64 `json:"inputTokens"`
+		OutputTokens *float64 `json:"outputTokens"`
+	} `json:"usage"`
+}
+
+type gatewayAnswer struct {
+	Type          *string             `json:"type"`
+	Choice        *string             `json:"choice"`
+	Probabilities map[string]*float64 `json:"probabilities"`
+}
+
+func (p *Provider) decodeGateway(req provider.Request, raw []byte) (provider.Response, error) {
+	malformed := func(format string, args ...any) (provider.Response, error) {
+		return provider.Response{}, provider.Errorf(provider.ErrMalformed, format, args...)
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	var w gatewayResponse
+	if err := dec.Decode(&w); err != nil {
+		return malformed("decoding response: %v", err)
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return malformed("unexpected data after response object")
+	}
+	if w.Answers == nil {
+		return malformed("response has no answers")
+	}
+	model := p.model
+	if w.Model != nil && strings.TrimSpace(*w.Model) != "" {
+		model = *w.Model
+	}
+	var usage provider.Usage
+	if w.Usage != nil {
+		for _, v := range []*float64{w.Usage.InputTokens, w.Usage.OutputTokens} {
+			if v != nil && (*v < 0 || *v != float64(int64(*v))) {
+				return malformed("response has invalid usage")
+			}
+		}
+		if w.Usage.InputTokens != nil {
+			usage.InputTokens = int(*w.Usage.InputTokens)
+		}
+		if w.Usage.OutputTokens != nil {
+			usage.OutputTokens = int(*w.Usage.OutputTokens)
+		}
+	}
+	answers := make(map[string]provider.Answer, len(w.Answers))
+	for id, wa := range w.Answers {
+		switch {
+		case wa == nil || wa.Type == nil:
+			return malformed("answer %q has no type", id)
+		case *wa.Type == "refusal":
+			answers[id] = provider.Answer{Refused: true}
+			continue
+		case *wa.Type != "choice":
+			return malformed("answer %q is a %s answer, not a choice", id, *wa.Type)
+		case wa.Choice == nil:
+			return malformed("answer %q has no choice", id)
+		case wa.Probabilities == nil:
+			return malformed("answer %q has no probability distribution", id)
+		}
+		probs := make(map[string]float64, len(wa.Probabilities))
+		for opt, v := range wa.Probabilities {
+			if v == nil {
+				return malformed("answer %q has a null probability for %q", id, opt)
+			}
+			probs[opt] = *v
+		}
+		answers[id] = provider.Answer{Choice: *wa.Choice, Probabilities: probs}
+	}
+	if err := provider.ValidateAnswers(req, answers); err != nil {
+		return provider.Response{}, err
+	}
+	return provider.Response{Model: model, Answers: answers, Usage: usage, Source: provider.SourceLive}, nil
 }
 
 // errorExcerpt pulls a short message out of the gateway ({"error":{...}}) or

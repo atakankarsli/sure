@@ -92,7 +92,7 @@ func newJevServer(t *testing.T) *jevServer {
 			return
 		}
 		var req struct {
-			State     json.RawMessage `json:"state"`
+			State     json.RawMessage `json:"stateParts"`
 			Questions map[string]struct {
 				Instructions map[string]string `json:"instructions"`
 				Criteria     map[string]any    `json:"criteria"`
@@ -131,7 +131,7 @@ func newJevServer(t *testing.T) *jevServer {
 			answers[id] = map[string]any{"type": "choice", "choice": choice, "probabilities": probs, "confidence": 0.9}
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"model": "jev-1.13.0", "answers": answers,
-			"usage": map[string]int{"input_tokens": len(b) / 4, "output_tokens": 0}})
+			"usage": map[string]int{"inputTokens": len(b) / 4, "outputTokens": 0}})
 	}))
 	t.Cleanup(s.Close)
 	return s
@@ -139,7 +139,7 @@ func newJevServer(t *testing.T) *jevServer {
 
 func (s *jevServer) factory() shared.ProviderFactory {
 	return shared.ProviderFactory{ConfigureJev: func(c *jev.Config) {
-		c.BaseURL, c.AllowInsecureBaseURL = s.URL+"/v1/evaluate", true
+		c.BaseURL, c.AllowInsecureBaseURL = s.URL+"/v4/ai/decision-model", true
 		c.Retry = provider.RetryPolicy{MaxRetries: 1, Gate: &provider.Gate{},
 			Sleep: func(context.Context, time.Duration) error { return nil }}
 	}}

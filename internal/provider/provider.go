@@ -66,6 +66,8 @@ type Answer struct {
 	Choice        string             `json:"choice"`
 	Probabilities map[string]float64 `json:"probabilities"`
 	Confidence    *float64           `json:"confidence,omitempty"`
+	// Refused means the model declined this question; it carries no choice.
+	Refused bool `json:"refused,omitempty"`
 }
 
 type Usage struct {
@@ -196,6 +198,12 @@ func ValidateAnswers(req Request, answers map[string]Answer) error {
 }
 
 func validateAnswer(q Question, a Answer) error {
+	if a.Refused {
+		if a.Choice != "" || len(a.Probabilities) > 0 {
+			return fmt.Errorf("a refusal carries a choice")
+		}
+		return nil
+	}
 	if len(a.Probabilities) != len(q.Options) {
 		return fmt.Errorf("expected %d probabilities, got %d", len(q.Options), len(a.Probabilities))
 	}

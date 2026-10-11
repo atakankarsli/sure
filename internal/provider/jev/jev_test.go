@@ -125,13 +125,71 @@ func TestBodyGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantGW := strings.Replace(want, `"jev-1.13.0"`, `"typesafe-ai/jev"`, 1)
-	wantGW = strings.TrimSuffix(wantGW, "}") + `,"providerOptions":{"gateway":{"only":["typesafe-ai"]}}}`
+	wantGW := `{"stateParts":[{"type":"json","value":{"files":[{"id":"F001","content":"x"}]}}],"questions":{` +
+		`"q002_assess":{"type":"choice","instructions":{"task":"assess","requirement":"cart <kept>"},"criteria":{"supported":"s","violated":"v","unknown":"u"}},` +
+		`"q001_locate":{"type":"choice","instructions":{"task":"locate"},"criteria":{"R001":"a.ts lines 1-3","NONE":"none"}}},` +
+		`"providerOptions":{"gateway":{"only":["typesafe-ai"]}}}`
 	if string(gw) != wantGW {
 		t.Fatalf("gateway body\n got: %s\nwant: %s", gw, wantGW)
 	}
-	if !json.Valid(gw) {
-		t.Fatal("gateway body is not valid JSON")
+	req.Questions[1].Options[0].Description = ""
+	nb, _ := Body(TransportGateway, "typesafe-ai/jev", req)
+	if !strings.Contains(string(nb), `"R001":null`) {
+		t.Fatalf("empty description must be null: %s", nb)
+	}
+}
+
+const gatewayReply = `{"answers":{` +
+	`"q002_assess":{"type":"choice","choice":"violated","probabilities":{"supported":0.02,"violated":0.95,"unknown":0.03}},` +
+	`"q001_locate":{"type":"refusal"}},"model":"jev-1.13.0","usage":{"inputTokens":321,"outputTokens":0},"warnings":[]}`
+
+func TestGatewayDecisionModelWire(t *testing.T) {
+	var gotBody []byte
+	s := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		for h, want := range map[string]string{
+			"Authorization": "Bearer " + testKey,
+			"ai-model-id":   "typesafe-ai/jev",
+			"ai-decision-model-specification-version": "4",
+			"ai-gateway-protocol-version":             "0.0.1",
+			"ai-gateway-auth-method":                  "api-key",
+		} {
+			if got := r.Header.Get(h); got != want {
+				t.Errorf("%s = %q, want %q", h, got, want)
+			}
+		}
+		gotBody, _ = io.ReadAll(r.Body)
+		io.WriteString(w, gatewayReply)
+	})
+	p := newTestProvider(t, TransportGateway, "", s.URL, nil)
+	resp, err := p.Evaluate(context.Background(), testRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(gotBody), `{"stateParts":`) {
+		t.Fatalf("body %s", gotBody)
+	}
+	if resp.Model != "jev-1.13.0" || resp.Usage.InputTokens != 321 || !resp.Answers["q001_locate"].Refused ||
+		resp.Answers["q002_assess"].Probabilities["violated"] != 0.95 || resp.Answers["q002_assess"].Confidence != nil {
+		t.Fatalf("decoded %+v", resp)
+	}
+
+	for name, body := range map[string]string{
+		"no distribution": strings.Replace(gatewayReply, `,"probabilities":{"supported":0.02,"violated":0.95,"unknown":0.03}`, ``, 1),
+		"score answer":    strings.Replace(gatewayReply, `{"type":"refusal"}`, `{"type":"score","score":1}`, 1),
+		"no answers":      `{"model":"x"}`,
+		"bad usage":       strings.Replace(gatewayReply, `"inputTokens":321`, `"inputTokens":-3`, 1),
+	} {
+		s := serve(t, reply(200, body))
+		p := newTestProvider(t, TransportGateway, "", s.URL, nil)
+		if _, err := p.Evaluate(context.Background(), testRequest()); kindOf(t, err) != provider.ErrMalformed {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+
+	s = serve(t, reply(200, strings.Replace(gatewayReply, `"model":"jev-1.13.0",`, ``, 1)))
+	p = newTestProvider(t, TransportGateway, "", s.URL, nil)
+	if resp, err := p.Evaluate(context.Background(), testRequest()); err != nil || resp.Model != DefaultGatewayModel {
+		t.Fatalf("missing model falls back to the requested one: %v %q", err, resp.Model)
 	}
 }
 
@@ -198,11 +256,11 @@ func TestEvaluateSuccessAndHeaders(t *testing.T) {
 }
 
 func TestIdentity(t *testing.T) {
-	p := newTestProvider(t, TransportGateway, "", "http://127.0.0.1:1/v1/evaluate", nil)
+	p := newTestProvider(t, TransportGateway, "", "http://127.0.0.1:1/v4/ai/decision-model", nil)
 	id := p.Identity()
 	want := provider.Identity{
-		Name: provider.NameJev, Transport: TransportGateway, Endpoint: "http://127.0.0.1:1/v1/evaluate",
-		Model: DefaultGatewayModel, WireFormat: "jev-gateway-v1", ProbabilitySource: provider.ProbabilityModel,
+		Name: provider.NameJev, Transport: TransportGateway, Endpoint: "http://127.0.0.1:1/v4/ai/decision-model",
+		Model: DefaultGatewayModel, WireFormat: "jev-gateway-v4", ProbabilitySource: provider.ProbabilityModel,
 	}
 	if id != want {
 		t.Fatalf("identity = %+v", id)
