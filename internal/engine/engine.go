@@ -91,6 +91,9 @@ type prepared struct {
 	head       string
 	baseCommit string
 	baseName   string
+	// onDefault is set when HEAD is the default branch itself, whose own
+	// commits are trusted.
+	onDefault bool
 	// autoAll is set when auto mode found no changes and fell back to all.
 	autoAll      bool
 	trustCommit  string
@@ -147,10 +150,14 @@ func prepare(ctx context.Context, opts Options, deps Deps) (*prepared, error) {
 	if opts.Mode == ModeChanged && (!repo.IsGit || p.head == "") {
 		return nil, fail("changed_requires_git", report.ExitUsage, "--changed needs a Git repository with at least one commit")
 	}
-	if (opts.Mode == ModeChanged || opts.Mode == ModeAuto) && repo.IsGit && p.head != "" {
+	// Every mode resolves the base: it is both the comparison point for
+	// changes and, off the default branch, the source of trusted contracts.
+	if repo.IsGit && p.head != "" {
 		ref := opts.BaseRef
 		if ref == "" {
 			ref = repo.DefaultBase(ctx)
+			branch := repo.CurrentBranch(ctx)
+			p.onDefault = branch != "" && (branch == ref || "origin/"+branch == ref)
 		}
 		p.baseName = ref
 		base, err := repo.ResolveCommit(ctx, ref)
@@ -223,6 +230,8 @@ func (p *prepared) loadTrust(ctx context.Context) error {
 	ref := p.opts.ContractsRef
 	switch {
 	case ref != "":
+	case p.onDefault:
+		ref = "HEAD"
 	case p.baseCommit != "":
 		ref = p.baseCommit
 	case p.head != "":

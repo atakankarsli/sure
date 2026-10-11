@@ -190,6 +190,16 @@ func (r *Repo) DefaultBase(ctx context.Context) string {
 	return "HEAD"
 }
 
+// CurrentBranch returns the checked-out branch's short name, or "" when HEAD
+// is detached.
+func (r *Repo) CurrentBranch(ctx context.Context) string {
+	out, err := r.run(ctx, "symbolic-ref", "--quiet", "--short", "HEAD")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func (r *Repo) MergeBase(ctx context.Context, a, b string) (string, error) {
 	out, err := r.run(ctx, "merge-base", "--end-of-options", a, b)
 	if err != nil {

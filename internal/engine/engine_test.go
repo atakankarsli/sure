@@ -679,3 +679,22 @@ func TestContractPrefixSelection(t *testing.T) {
 		t.Fatalf("partial word must not match: %d %v", r.ExitCode, r.Errors)
 	}
 }
+
+func TestCommittedBranchEditsToContractsAreNotTrusted(t *testing.T) {
+	dir, base := committedRepo(t, baseFiles())
+	testutil.Git(t, dir, "checkout", "-q", "-b", "feature")
+	testutil.Write(t, dir, ".sure/contracts/checkout.md", strings.Replace(checkoutMD, "severity: error", "severity: warning", 1))
+	testutil.Write(t, dir, "src/features/checkout/finish.ts", finishBad)
+	testutil.Commit(t, dir, "weaken and break")
+
+	for _, opts := range []engine.Options{
+		{Mode: engine.ModeContract, Contracts: []string{"checkout.failure"}},
+		{Mode: engine.ModeAll},
+		{Mode: engine.ModeAuto},
+	} {
+		r := check(t, dir, &fake.Fake{Decide: decider}, opts)
+		if *r.Trust.ContractsCommit != base || r.ExitCode != report.ExitViolation {
+			t.Fatalf("%s: trusted %s (want base %s), exit %d", opts.Mode, *r.Trust.ContractsCommit, base, r.ExitCode)
+		}
+	}
+}
