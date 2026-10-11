@@ -17,12 +17,15 @@ Jev `jev-1.13.0` called directly through TypeSafe, against Claude Haiku 5.5 at e
 |---|---|---|---|---|---|---|
 | contracts, dev + holdout | Jev | 13/18 | **2** | 88/95 | 0 | 40 cases 7.4 s, p50 0.9 s/case |
 | contracts, dev + holdout | Haiku | 16/18 | 0 | 82/95 | 0 | 30 cases 33 s, p50 5.6 s/case |
-| ad-hoc (diff + imports), dev | Jev | 7/12 | 1 | 39/59 | 0 | 3.2 s |
-| ad-hoc (diff + imports), holdout | Jev | 1/6 | 1 | 16/36 | 0 | 2.0 s |
-| ad-hoc (diff + imports), dev | Haiku | 8/12 | 0 | 33/59 | 0 | 24.4 s |
+| ad-hoc (diff + imports), dev | Jev | 11/12 | 0 | 49/59 | 0 | 3.1 s |
+| ad-hoc (diff + imports), holdout | Jev | 2/6 | 1 | 30/36 | 0 | 2.0 s |
+| ad-hoc (diff + imports), dev | Haiku | 11/12 | 0 | 50/59 | 0 | 19.0 s |
+| ad-hoc (diff + imports), holdout | Haiku | 6/6 | 0 | 36/36 | 0 | 11.4 s |
 | software (incomplete + trust) | either | — | — | 27/27 assertions | — | under 7 s |
 
-Jev is about six times faster and clears more safe code. Its misses are confident, though. It cleared both CHK-003 mutants (C003, C015, P(supported) 0.94–0.95): a removed `submitting: false` that object spread keeps true. In the ad-hoc track it also cleared C010 (stock taken inside the validation loop, 0.98). TypeSafe's jaggedness notes list indirection as a known weakness. Haiku's misses were all "not sure" and in the right direction (0.85–0.88 on contracts), but its numbers are self-reported and cluster at round values. Holdout results were not used to tune anything.
+Ad-hoc rows were rerun after a harness bug: requirements were cut at their first line break, so the model judged half sentences. That bug, not Jev, caused the earlier ad-hoc C010 miss.
+
+Jev is about six times faster. Its one real weakness so far is confident: it cleared both CHK-003 mutants (C003 and C015, P(supported) 0.92–0.95). There a removed `submitting: false` is kept true by object spread, across two files. In a probe on C003, the contract wording gave 0.79 supported. A one-path fact ("when placeOrder resolves with ok: false, the returned state has submitting false") gave 0.81 violated. Stating the hidden input ("applyFailure is called while submitting is true") gave 0.95 violated. Jev sees the bug once the question points at the path and the incoming value; it does not trace implicit state across files on its own. TypeSafe's jaggedness notes list indirection as a known weakness. Haiku's misses were all "not sure" and in the right direction (0.85–0.88 on contracts), but its numbers are self-reported and cluster at round values. Holdout results were not used to tune anything.
 
 The eval found and fixed one real bug: `sure <contract>` used to trust HEAD, so a contract weakened on a feature branch was believed. Trusted contracts now come from the merge base in every mode.
 
