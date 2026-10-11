@@ -2,7 +2,7 @@
 
 Sure checks source code against versioned product expectations written in plain English. A coding agent writes the contracts. A later agent changes code and runs `sure check`. Sure collects a bounded set of relevant source files, asks a decision model fixed questions, and returns JSON diagnostics for the next agent. Go, [ffcli](https://github.com/peterbourgon/ff), CGO-free.
 
-This repository holds only the tool. The evaluation corpus lives in a separate repository (not built yet).
+This repository holds only the tool. The evaluation corpus is the separate `sure-eval` repository (`~/work/CLI/sure-eval`): a fixture shop, independent oracles, 40 cases and a harness (`npm run validate`, `npm run eval`).
 
 ## Read first
 
@@ -34,20 +34,21 @@ Where the ADR and the brief disagree, the ADR wins. Where either disagrees with 
 
 ```text
 main.go                         # os.Exit lives here only
-cmd/                            # Run (signals, exit codes), root command and grouped help
-schemas/                        # embedded, published JSON schemas
-skills/sure/SKILL.md            # how agents use Sure in other repositories
+cmd/                            # Run (signals, exit codes); bare `sure` is the check
+schemas/                        # embedded, published JSON schema
+skills/sure/SKILL.md            # how agents set up and use Sure in other repositories
 internal/
   cli/
-    registry/                   # every subcommand, built fresh per invocation
-    shared/                     # Deps, output, selection flags, provider factory, usage
-    initcmd/ contractscmd/ plan/ check/ doctor/ schemacmd/
+    check/                      # the default command and its flags (--expect, --checks, --json, --dry-run …)
+    initcmd/ validate/ doctor/  # the other visible commands
+    schemacmd/ registry/        # hidden `schema`, `check`, `version`; command list
+    shared/                     # Deps, output, provider factory, usage
     cmdtest/                    # in-process end-to-end tests over httptest
-  contracts/                    # config + contract grammar, validation, trusted diff
-  gitview/                      # hardened read-only Git: worktree, trees, changes
-  evidence/                     # snapshot capture, per-contract bundles, regions, visual manifest
-  engine/                       # selection, prompts, policy, run assembly, exit codes
-  report/                       # output documents, markdown and table rendering
+  contracts/                    # config + contract grammar, ad-hoc checks, trusted diff
+  gitview/                      # hardened read-only Git: inventory, trees, changes, default base
+  evidence/                     # lazy snapshot, bundles, regions, related files, visual manifest
+  engine/                       # selection, prompts, policy, confidence, run assembly
+  report/                       # output documents and the human renderer
   provider/                     # interface, validation, retry/backoff
     jev/ anthropic/ replay/ fake/
   cache/                        # content-addressed decision cache
@@ -60,10 +61,12 @@ The architecture comes from `github.com/atakankarsli/adc` (the owner's MIT proje
 
 ## Patterns
 
-- A new command is a package under `internal/cli/` with `Command(deps shared.Deps) *ffcli.Command`, registered in `registry.go` and grouped in `cmd/root.go`.
+- Bare `sure` runs the check (`internal/cli/check`); `sure check` is a hidden alias. Visible commands are listed in `registry.Visible`; keep that list short.
+- Flags may follow positional arguments (`shared.ParseInterspersed`). Machine output is `--json`; everything else is the human renderer in `report/human.go`.
 - Commands print one document with `shared.Print` and return `shared.Exit(code)`. Errors after flag parsing go inside the JSON envelope with their exit code.
 - Providers return only `*provider.Error`; `engine.ExitFor` maps kinds to exit codes.
-- Any change to question wording bumps `engine.PromptVersion`; any change to evidence assembly bumps `evidence.CollectorVersion`. Both are part of the cache key.
+- Trusted contracts come from the merge base with the default branch in every mode (HEAD only on the default branch itself). Ad-hoc checks are never trusted and are labelled `adhoc`.
+- Any change to question wording bumps `engine.PromptVersion`; any change to evidence assembly bumps `evidence.CollectorVersion`; any change to how a provider reads answers bumps its wire format. All are part of the cache key.
 
 ## Exit codes
 

@@ -1,39 +1,31 @@
 # Plan
 
-Milestones follow brief §17, adjusted by `docs/adr/0001-foundation.md`. The evaluation milestones (fixture app, 40-case corpus, measurement, repair episodes) belong to the separate evaluation repository.
+## Done (2026-10-11)
 
-## M0 — Inspect and document ✅ (2026-10-11)
+- **M0–M2 of the brief:** contracts, trusted base, snapshots, evidence, Jev (gateway and direct), Claude, cache, replay, visual manifest, exit codes, schema. Offline tests across every package, race-clean, CGO-free cross-builds.
+- **Vercel-style CLI:** bare `sure` checks the flows a change touches and prints how sure the model is (`3% sure`, per flow and per check, with file:lines). Four visible commands: `sure`, `init`, `validate`, `doctor`.
+- **Ad-hoc checks:** `--expect`, `--checks file.md|-`, `--scope`. They read the changed files plus their imports and importers (TS/JS, Python), and work without `.sure/`.
+- **Gateway:** Jev is called through `POST /v4/ai/decision-model`, the route the AI SDK uses. Refusals are handled.
+- **Speed:** unchanged tracked files are identified by Git blob IDs and read only when they become evidence; the region table goes once per request.
+- **Evaluation repo** (`sure-eval`): fixture shop, 19 independent Vitest oracles, 40 cases validated without any model, and a harness with a contract track and an ad-hoc track.
 
-Handoff read and kept in `docs/handoff/`; ADC template read at `origin/main` `0d954e7`; Jev wire checked against TypeSafe docs and the gateway; ADR 0001; private remote.
+## Measured (Claude Haiku 5.5, effort low, one run each; not calibrated, not Jev)
 
-## M1 — Offline vertical slice ✅ (2026-10-11)
+| Track | Split | Violations caught | Wrongly cleared | Safe checks cleared | False alarms | Time |
+|---|---|---|---|---|---|---|
+| contracts | dev (20) | 11/12 | 0 | 49/59 | 0 | 20.6 s, p50 5.6 s/case |
+| contracts | holdout (10) | 5/6 | 0 | 33/36 | 0 | 12.1 s |
+| ad-hoc, diff only | dev (20) | 6/12 | 0 | 13/59 | 0 | 21.9 s |
+| ad-hoc, diff + imports | dev (20) | 8/12 | 0 | 33/59 | 0 | 24.4 s |
+| software (incomplete + trust) | 10 | — | — | 27/27 assertions | — | 6.7 s |
 
-- CLI adapted from ADC: `init`, `contracts validate`, `plan`, `check`, `doctor`, `schema`, `version`; grouped help; injected writers and dependencies.
-- Strict contract grammar and config validation; trusted-vs-working-tree diff.
-- Snapshot capture of allowlisted bytes, whole-file evidence bundles, regions for localization, byte and token budgets.
-- Fake provider; JSON output validated against `schemas/run-result.schema.json`; exit-code precedence.
-- Tests prove the target is never executed (scripts, Makefile, fsmonitor and diff drivers stay untouched).
+Every miss so far is "not sure", never a wrong answer. Haiku's self-reported probabilities sit just under 90% on correct code. One holdout case failed on a format error (a repeated option), since fixed. Holdout results were not used to tune anything.
 
-## M2 — Real providers and safe snapshots ✅ (2026-10-11), live Jev pending
-
-- Jev over the Vercel gateway (`/v1/evaluate`, upstream pinned to `typesafe-ai`) and TypeSafe direct; Claude (`claude-haiku-5-5`) through the official Go SDK with structured output.
-- Strict response validation, retries with `Retry-After` and a shared backoff gate, deadlines, redirects refused.
-- Content-addressed cache, `--record` / `--provider replay`.
-- `--changed` with merge base, renames, deletions, untracked files, unmapped changes, plan invalidation by dependency manifests and contract edits; `--assess-base` regression labelling.
-- Visual manifest parsing and the `unsupported_evidence_kind` outcome.
-- Live trial (Claude Haiku 5.5, 2026-10-11, demo repo in a scratch folder): the clean baseline gave 1 supported and 2 unknown (`low_confidence`, p≈0.80–0.85); a cart-clearing bug in the failure branch came back `violated` (p=0.93) on the right function, exit 1. Two runs, about 9.7k input tokens in total. This is a smoke test, not a measurement.
-
-## M5 — Release-ready development artifacts ✅ (local only)
-
-README, AGENTS.md, skill, schema, Makefile, pre-commit hook, CI (format, vet, race tests, CGO-free cross-build), GoReleaser with releases disabled.
+The eval found and fixed one real bug: `sure <contract>` used to trust HEAD, so a contract weakened on a feature branch was believed. Trusted contracts now come from the merge base in every mode.
 
 ## Next
 
-- **Live Jev:** add a credit card to the Vercel team, then run `sure doctor --live`. Confirm the gateway's response shape, whether `providerOptions` pinning is honored, and the returned model; record request/response fixtures.
-- **Evaluation repository:** fixture shop, independent oracles, 40 cases, frozen splits, measured precision/recall per provider. Only then tune the policy thresholds.
-- **Claude calibration:** Haiku's self-reported probabilities sit just under the 0.90 threshold on correct code. Do not lower the threshold before the evaluation repository measures it; try `effort: medium` first.
-
-## Open questions
-
-- Live budget for the evaluation runs (Jev is $0.042 per million input tokens; Haiku 5.5 is $0.10/$0.50).
-- Whether a Jev version can be pinned through the gateway.
+- **Jev live:** add a card to the Vercel team, then `sure doctor --live` and `npm run eval -- --split all --provider jev` in `sure-eval`. Compare against the table above.
+- **Policy:** after the Jev run, decide the threshold per provider from the dev split only.
+- **Evidence:** import following covers TS/JS and Python; add Go and Swift if those repos need ad-hoc checks.
+- **Repair episodes:** the brief's agent repair demo (bug → Sure finding → agent fix → oracle) is not built yet.

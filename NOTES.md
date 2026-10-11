@@ -1,6 +1,6 @@
 # Notes
 
-Gotcha: The Vercel AI Gateway serves Jev at `POST /v1/evaluate`, not `/v1/systemone`. Its boolean question type is `boolean`, not TypeSafe's `noul`.
+Gotcha: The AI SDK calls Jev at `POST https://ai-gateway.vercel.sh/v4/ai/decision-model` with the model in the `ai-model-id` header and state in `stateParts`. Sure uses that route; `/v1/evaluate` also exists but its response shape is undocumented.
 Gotcha: The gateway validates the request body before auth and billing. A 400 does not prove the key is valid.
 Gotcha: Until the Vercel team has a credit card on file, every gateway call returns `403 customer_verification_required`, even with a valid key.
 Gotcha: The gateway's `typesafe-ai/jev` has two upstreams, and `digitalocean` has no zero data retention. Pin routing to `typesafe-ai` before sending real source.
@@ -12,3 +12,7 @@ Gotcha: Claude's reported input tokens are about 5x Sure's estimate (system prom
 Gotcha: Claude Haiku 5.5 at effort `low` reports p≈0.80–0.85 for code that does satisfy a requirement, so the 0.90 policy turns those into `unknown`. That is the policy working, not a bug.
 Gotcha: In `httptest`, a handler that blocks on `r.Context().Done()` can hang `Server.Close()`. Register the cleanup that releases the handler after starting the server, because `t.Cleanup` runs last-in, first-out.
 Gotcha: Context files alone never make a contract checkable; a scope that matches nothing is `empty_scope` even when its context files exist.
+Gotcha: Claude rarely lists every option of a long choice and its totals drift (0.96–1.04). The Claude adapter completes and rescales; never apply that to Jev.
+Gotcha: Go's flag package stops at the first positional argument, so `sure checkout --json` lost `--json` until `shared.ParseInterspersed`.
+Gotcha: Vitest resolves `--config` relative to `--root`; sure-eval passes the candidate root through `ORACLE_ROOT` instead.
+Gotcha: Without import following, ad-hoc checks on a diff mostly come back unsure: the model sees only the changed file.

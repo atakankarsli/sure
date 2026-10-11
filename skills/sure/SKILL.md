@@ -1,66 +1,68 @@
 ---
 name: sure
-description: Write feature contracts in plain English and check code changes against them with the `sure` CLI. Use after editing code in a repository that has a .sure/ directory, when asked to add or review product requirements as contracts, or when a `sure check` result needs to be acted on.
+description: Check that code changes keep a product's core flows working, without writing or running tests. Use after editing code in a repository that has .sure/, when asked to set up or update the flows Sure checks, or when you want to confirm a specific expectation about a change ("make sure checkout still keeps the cart").
 ---
 
-# Sure
+# sure
 
-`sure` checks source code against feature contracts: short Markdown files in `.sure/contracts/` whose checks state, in English, what the product must do. It reads source; it never builds, runs or tests the application.
+`sure` reads source code and asks a fast decision model whether it still does what plain-English flows say. It never builds, runs or tests the app. Run `sure --help` for the exact interface.
 
-## After a batch of edits
+## After every change
 
 ```sh
-sure check --repo . --changed --base main --output json
+sure --json
 ```
 
-Read the single JSON document on stdout. Progress lines go to stderr.
+It checks the flows your changes touch (against origin/HEAD, main or master) and returns one JSON document. Read `confidence.percent`, then `checks[]`:
 
-| Exit | Meaning | What to do |
+| Exit | Meaning | Do |
 |---|---|---|
-| 0 | No violation in the selected checks, or nothing applicable changed | Continue. `no_changes` and `not_checked` are not passes of anything. |
-| 1 | An error-severity check is `violated` | Fix the behavior, then run the check's `recheck` argv. |
-| 3 | Incomplete: `unknown` checks, changed source no contract covers, or contract changes needing review | Follow each `next_actions` entry; report what you could not resolve. |
-| 2 | Invalid flags or config | Read `errors[]`; run `sure doctor --output json`. |
-| 10–13, 130 | Provider or run failure | Not a verdict. Report it; do not retry until green. |
+| 0 | Every touched flow holds, at ≥90% by default | Continue |
+| 1 | A flow is violated | Open each `locations[]` with `role: model_selected` (file and lines), fix the code, run the check's `recheck` argv |
+| 3 | Not sure: a check is unknown, a changed file belongs to no flow, or `.sure/` changed | Follow `next_actions`; tell the user what stays unresolved |
+| 2 | Bad flags or config | Read `errors[]`; run `sure doctor` |
+| 10–13 | The model call failed | Report it; do not loop until it passes |
 
-For each check in `checks[]`:
+Never edit `.sure/contracts/` to make a check pass. Contracts are read from the base branch, so the edit would not count anyway; it would only show up in `contract_changes`. Stop after three repair rounds on the same check and report instead.
 
-- `requirement` is the immutable expectation. Never edit a contract to make a check pass; contract edits are evaluated from the trusted base anyway and reported in `contract_changes`.
-- `locations` with `role: model_selected` is the region the model picked; `inspected` only means the file was read. Neither is an execution trace.
-- `next_actions` are typed: `inspect_source`, `supply_context`, `narrow_scope`, `provide_visual_evidence`, `review_contract_change`, `map_changed_source`, `recheck`. Run `recheck` exactly as given; it keeps the trusted contracts ref and provider.
-- `unknown` is never a pass. `low_confidence` and `model_unknown` usually mean the contract's scope or context misses a file the behavior depends on.
+## Check something specific
 
-Stop after three repair rounds on the same check and report instead of looping.
+When you want to be sure of something the flows do not cover, say it:
 
-## Writing contracts
-
-```markdown
----
-schema_version: sure.contract/v1
-id: checkout.failure
-severity: error
-evidence: code
-scope:
-  - src/features/checkout/**
-context:
-  - src/domain/orders.ts
----
-# Checkout failure
-
-## CHK-001 — Preserve the cart
-Given a non-empty cart, when order submission resolves with an error,
-existing cart items and quantities must remain unchanged.
+```sh
+sure --expect "When payment fails, the cart keeps its items" --json
+sure --checks expectations.md --json            # '## Title' sections or '- ' bullets
 ```
 
-- Write from accepted product intent, not from what the code does today.
-- One observable behavioral outcome per check. No "everything works" checks and no implementation trivia.
-- `scope` globs select the code that implements the feature; `context` lists exact extra files it depends on (types, services). Both trigger the contract when they change.
-- Every `##` heading is a check: `## <ID>-<number> — <title>`. Check IDs are stable; never renumber.
-- `evidence: image` checks stay `unknown` until an image-capable provider exists.
-- Run `sure contracts validate --repo . --output json`, then commit `.sure/`. Checks use committed contracts as the trusted base; before the first commit use `--draft`.
+These ad-hoc checks read the changed files plus what they import and what imports them. If they come back unsure, point them at the code with `--scope 'src/checkout/**'`. Each sentence should state one observable outcome.
 
-## Other commands
+## Set up a repository (once)
 
-- `sure plan --repo . --changed --output json`: what would be selected and sent, offline.
-- `sure doctor --repo . --output json`: Git, config, trusted contracts, key presence, cache. `--live` sends one synthetic question with no source.
-- `sure schema`: the JSON schema of the check output.
+1. Run `sure init`. It creates `.sure/` and never overwrites anything.
+2. Read the codebase: entry points, routes and screens, money paths, writes to storage, auth, background jobs.
+3. Ask the user once, in a single message, at most five questions: which journeys make money or keep users; what must never break; what is out of scope; which areas are fragile; anything already promised to users.
+4. Propose about 20 flows as a numbered list: id (`checkout.failure`), the outcomes it guarantees, and the files that implement it. Wait for the user's approval.
+5. Write each approved flow as `.sure/contracts/<id>.md`:
+
+   ```markdown
+   ---
+   schema_version: sure.contract/v1
+   id: checkout.failure
+   severity: error
+   evidence: code
+   scope:
+     - src/features/checkout/**
+   context:
+     - src/domain/cart.ts
+   ---
+   # Checkout failure
+
+   ## CHK-001 — Preserve the cart
+   When order submission fails, the cart's items and quantities stay unchanged.
+   ```
+
+   - Write from what the product must do, not from what the code does today.
+   - One behavioral outcome per check. Never renumber check IDs.
+   - `scope` globs cover the implementation. `context` lists the exact files it depends on, such as types and services.
+6. Run `sure validate`, then `sure --all --dry-run` to check that each flow fits the budget, then `sure --all`. A flow that comes back unsure usually needs more `context`.
+7. Commit `.sure/`. From then on `sure` checks against these committed flows.
