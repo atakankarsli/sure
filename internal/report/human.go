@@ -251,9 +251,11 @@ func nextStep(r Run) string {
 	}
 	switch {
 	case r.Summary.Violated > 0 && argv != nil:
-		return "Next: fix the violated behavior, then run `" + strings.Join(trimRecheck(argv), " ") + "`"
+		return "Next: fix the violated behavior, then run `" + shellJoin(trimRecheck(argv)) + "`"
 	case r.Summary.Error > 0:
 		return "Next: the provider failed; run `sure doctor --live`, then retry"
+	case r.Summary.Unknown > 0 && adhocUnknown(r):
+		return "Next: pass --scope <glob> so your checks read the files the behavior lives in, then rerun"
 	case r.Summary.Unknown > 0:
 		return "Next: add the files these checks depend on to the contract's scope or context, then rerun `sure`"
 	case len(r.UnmappedChanges) > 0:
@@ -377,4 +379,30 @@ func thousands(n int) string {
 		return fmt.Sprint(n)
 	}
 	return fmt.Sprintf("%.1fk", float64(n)/1000)
+}
+
+func adhocUnknown(r Run) bool {
+	adhoc := map[string]bool{}
+	for _, c := range r.Contracts {
+		adhoc[c.ID] = c.Adhoc
+	}
+	for _, c := range r.Checks {
+		if c.Verdict == VerdictUnknown && adhoc[c.Contract] {
+			return true
+		}
+	}
+	return false
+}
+
+// shellJoin quotes arguments so the printed command can be pasted as is.
+func shellJoin(argv []string) string {
+	out := make([]string, len(argv))
+	for i, a := range argv {
+		if a != "" && !strings.ContainsAny(a, " \t\n'\"$`\\*?[]{}()<>|&;#~") {
+			out[i] = a
+			continue
+		}
+		out[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+	}
+	return strings.Join(out, " ")
 }

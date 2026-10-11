@@ -19,6 +19,7 @@ import (
 
 // Deps is constructed once per invocation; tests replace any part of it.
 type Deps struct {
+	Stdin    io.Reader
 	Stdout   io.Writer
 	Stderr   io.Writer
 	Getenv   func(string) string
@@ -32,6 +33,7 @@ type Deps struct {
 
 func DefaultDeps(version string) Deps {
 	return Deps{
+		Stdin:    os.Stdin,
 		Stdout:   os.Stdout,
 		Stderr:   os.Stderr,
 		Getenv:   os.Getenv,
@@ -96,6 +98,16 @@ func Print(w io.Writer, asJSON bool, data any, human func() string) error {
 	}
 	_, err := io.WriteString(w, s)
 	return err
+}
+
+// StringList is a repeatable string flag.
+type StringList []string
+
+func (s *StringList) String() string { return strings.Join(*s, ", ") }
+
+func (s *StringList) Set(v string) error {
+	*s = append(*s, v)
+	return nil
 }
 
 // ParseInterspersed lets flags follow positional arguments, so

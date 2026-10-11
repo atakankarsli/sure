@@ -188,6 +188,12 @@ func fileByID(b evidence.Bundle, id string) evidence.File {
 // next agent checks the same immutable expectation.
 func recheck(p *prepared, contractID string) report.Action {
 	argv := []string{"sure", contractID, "--repo", p.opts.Repo}
+	if contractID == contracts.AdhocID || p.isAdhoc(contractID) {
+		argv = append([]string{"sure", "--repo", p.opts.Repo}, p.opts.AdhocArgv...)
+		if p.adhocOnly {
+			return report.Action{Kind: report.ActionRecheck, Argv: append(argv, "--json")}
+		}
+	}
 	if p.opts.Draft {
 		argv = append(argv, "--draft")
 	} else {
@@ -200,4 +206,13 @@ func recheck(p *prepared, contractID string) report.Action {
 		argv = append(argv, "--provider", p.opts.Provider)
 	}
 	return report.Action{Kind: report.ActionRecheck, Argv: append(argv, "--json")}
+}
+
+func (p *prepared) isAdhoc(id string) bool {
+	for _, c := range p.adhoc {
+		if c.ID == id {
+			return true
+		}
+	}
+	return false
 }

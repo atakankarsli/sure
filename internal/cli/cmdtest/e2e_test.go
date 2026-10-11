@@ -410,3 +410,33 @@ func TestInitValidateDryRunDoctorSchema(t *testing.T) {
 		t.Fatalf("schema: %+v", r)
 	}
 }
+
+func TestAdhocChecksFromFlagsAndStdin(t *testing.T) {
+	dir := repo(t)
+	srv := newJevServer(t)
+	testutil.Write(t, dir, "src/checkout/finish.ts", badFinish)
+
+	r := Run(env(t), srv.factory(), "--repo", dir, "--json", "--expect", "When order submission fails, existing cart items must remain unchanged.")
+	m := validateRun(t, r.Stdout)
+	var adhoc map[string]any
+	for _, c := range m["contracts"].([]any) {
+		if c.(map[string]any)["id"] == "adhoc" {
+			adhoc = c.(map[string]any)
+		}
+	}
+	if r.ExitCode != 1 || adhoc == nil || adhoc["adhoc"] != true || adhoc["files"].([]any)[0].(map[string]any)["path"] != "src/checkout/finish.ts" {
+		t.Fatalf("--expect: exit %d adhoc %v", r.ExitCode, adhoc)
+	}
+
+	r = RunWithStdin(env(t), srv.factory(), "## Cart survives\nWhen order submission fails, existing cart items must remain unchanged.\n", "--repo", dir, "--checks", "-")
+	if r.ExitCode != 1 || !strings.Contains(r.Stdout, "✗ adhoc") || !strings.Contains(r.Stdout, "Cart survives") {
+		t.Fatalf("--checks -:\n%s", r.Stdout)
+	}
+
+	for _, args := range [][]string{{"--scope", "src/**"}, {"--checks", filepath.Join(dir, "missing.md")}, {"--expect", "  "}} {
+		r = Run(env(t), srv.factory(), append([]string{"--repo", dir, "--json"}, args...)...)
+		if r.ExitCode != 2 || validateRun(t, r.Stdout)["errors"].([]any)[0].(map[string]any)["code"] != "invalid_flags" {
+			t.Errorf("%v: %+v", args, r)
+		}
+	}
+}

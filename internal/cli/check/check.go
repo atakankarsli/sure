@@ -5,6 +5,10 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
+	"io"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/peterbourgon/ff/v3/ffcli"
@@ -29,6 +33,7 @@ Exit codes: 0 pass, 1 violated, 2 usage or config error, 3 not sure
 // Flags are the check flags; the root command and the `check` alias share
 // them.
 type Flags struct {
+	expect, checks, scope                              shared.StringList
 	repo, base, contractsRef, provider, record, replay *string
 	all, dryRun, asJSON, draft, noCache, assessBase    *bool
 	verbose                                            *bool
@@ -36,7 +41,7 @@ type Flags struct {
 }
 
 func Bind(fs *flag.FlagSet) *Flags {
-	return &Flags{
+	f := &Flags{
 		asJSON:       fs.Bool("json", false, "Print one JSON document (for agents and CI)"),
 		dryRun:       fs.Bool("dry-run", false, "Show what would be checked and sent; no model call"),
 		all:          fs.Bool("all", false, "Check every contract"),
@@ -52,6 +57,69 @@ func Bind(fs *flag.FlagSet) *Flags {
 		timeout:      fs.Duration("timeout", 10*time.Minute, "Deadline for the whole run"),
 		verbose:      fs.Bool("verbose", false, "Print one progress line per contract to stderr"),
 	}
+	fs.Var(&f.expect, "expect", "Also check this sentence against your changes (repeatable)")
+	fs.Var(&f.checks, "checks", "Also check the expectations in this Markdown file, or - for stdin (repeatable)")
+	fs.Var(&f.scope, "scope", "Files the --expect/--checks checks read (glob, repeatable; default: changed files)")
+	return f
+}
+
+// adhoc reads --expect and --checks into contracts for this run, plus the
+// flags that reproduce them.
+func (f *Flags) adhoc(stdin io.Reader) ([]contracts.Contract, []string, error) {
+	if len(f.expect) == 0 && len(f.checks) == 0 {
+		if len(f.scope) > 0 {
+			return nil, nil, errors.New("--scope applies to --expect and --checks")
+		}
+		return nil, nil, nil
+	}
+	var loose []contracts.Check
+	var out []contracts.Contract
+	var argv []string
+	for _, e := range f.expect {
+		if strings.TrimSpace(e) == "" {
+			return nil, nil, errors.New("--expect needs a sentence")
+		}
+		loose = append(loose, contracts.Expectation(e))
+		argv = append(argv, "--expect", e)
+	}
+	usedStdin := false
+	for _, path := range f.checks {
+		var data []byte
+		var err error
+		if path == "-" {
+			if usedStdin {
+				return nil, nil, errors.New("--checks - can be given once")
+			}
+			usedStdin = true
+			data, err = io.ReadAll(io.LimitReader(stdin, contracts.MaxContractBytes+1))
+		} else {
+			data, err = os.ReadFile(path)
+		}
+		if err != nil {
+			return nil, nil, fmt.Errorf("--checks %s: %w", path, err)
+		}
+		if len(data) > contracts.MaxContractBytes {
+			return nil, nil, fmt.Errorf("--checks %s: larger than %d bytes", path, contracts.MaxContractBytes)
+		}
+		full, light, issues := contracts.ParseAdhoc(path, data)
+		if len(issues) > 0 {
+			return nil, nil, fmt.Errorf("--checks %s", issues[0].String())
+		}
+		out = append(out, full...)
+		loose = append(loose, light...)
+		argv = append(argv, "--checks", path)
+	}
+	if len(loose) > 0 {
+		c, issues := contracts.AdhocContract(loose, f.scope)
+		if len(issues) > 0 {
+			return nil, nil, errors.New(issues[0].Message)
+		}
+		out = append(out, c)
+	}
+	for _, g := range f.scope {
+		argv = append(argv, "--scope", g)
+	}
+	return out, argv, nil
 }
 
 func (f *Flags) options(args []string) (engine.Options, error) {
@@ -103,6 +171,9 @@ func Exec(deps shared.Deps, fs *flag.FlagSet, f *Flags) func(context.Context, []
 			return err
 		}
 		opts, err := f.options(args)
+		if err == nil {
+			opts.Adhoc, opts.AdhocArgv, err = f.adhoc(deps.Stdin)
+		}
 		if *f.dryRun {
 			var p report.Plan
 			if err != nil {

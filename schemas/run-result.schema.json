@@ -197,7 +197,8 @@
             "mode": {
               "enum": [
                 "protected",
-                "draft"
+                "draft",
+                "adhoc"
               ]
             },
             "contracts_ref": {
@@ -505,6 +506,7 @@
       "additionalProperties": false,
       "required": [
         "id",
+        "adhoc",
         "path",
         "evidence",
         "selected",
@@ -520,6 +522,9 @@
       "properties": {
         "id": {
           "type": "string"
+        },
+        "adhoc": {
+          "type": "boolean"
         },
         "path": {
           "type": "string"

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/atakankarsli/sure/internal/contracts"
 	"github.com/atakankarsli/sure/internal/engine"
 	"github.com/atakankarsli/sure/internal/provider"
 	"github.com/atakankarsli/sure/internal/provider/fake"
@@ -696,5 +697,84 @@ func TestCommittedBranchEditsToContractsAreNotTrusted(t *testing.T) {
 		if *r.Trust.ContractsCommit != base || r.ExitCode != report.ExitViolation {
 			t.Fatalf("%s: trusted %s (want base %s), exit %d", opts.Mode, *r.Trust.ContractsCommit, base, r.ExitCode)
 		}
+	}
+}
+
+func adhoc(t *testing.T, scope []string, sentences ...string) contracts.Contract {
+	t.Helper()
+	var checks []contracts.Check
+	for _, s := range sentences {
+		checks = append(checks, contracts.Expectation(s))
+	}
+	c, issues := contracts.AdhocContract(checks, scope)
+	if len(issues) > 0 {
+		t.Fatal(issues)
+	}
+	return c
+}
+
+func TestAdhocChecksReadChangedFiles(t *testing.T) {
+	dir, _ := committedRepo(t, baseFiles())
+	testutil.Write(t, dir, "src/features/checkout/finish.ts", finishBad)
+	f := &fake.Fake{Decide: decider}
+	r := check(t, dir, f, engine.Options{Mode: engine.ModeAuto,
+		Adhoc: []contracts.Contract{adhoc(t, nil, "When order submission fails, existing cart items must remain unchanged.")}, AdhocArgv: []string{"--expect", "x"}})
+	var ce report.ContractEvidence
+	for _, c := range r.Contracts {
+		if c.ID == contracts.AdhocID {
+			ce = c
+		}
+	}
+	if !ce.Adhoc || len(ce.Files) != 1 || ce.Files[0].Path != "src/features/checkout/finish.ts" {
+		t.Fatalf("ad-hoc evidence: %+v", ce)
+	}
+	v := verdicts(r)
+	if v["adhoc/ADHOC-001"] != "violated/source_conflicts_with_requirement" || r.ExitCode != report.ExitViolation {
+		t.Fatalf("ad-hoc verdict: %v exit %d", v, r.ExitCode)
+	}
+	for _, c := range r.Checks {
+		if c.ID == "adhoc/ADHOC-001" {
+			argv := strings.Join(c.NextActions[len(c.NextActions)-1].Argv, " ")
+			if !strings.Contains(argv, "--expect x") {
+				t.Fatalf("ad-hoc recheck %s", argv)
+			}
+		}
+	}
+
+	testutil.Git(t, dir, "checkout", "-q", "--", ".")
+	r = check(t, dir, f, engine.Options{Mode: engine.ModeAuto, Adhoc: []contracts.Contract{adhoc(t, nil, "anything")}})
+	if r.ExitCode != report.ExitUsage || r.Errors[0].Code != "adhoc_needs_scope" {
+		t.Fatalf("no changes: %d %v", r.ExitCode, r.Errors)
+	}
+	r = check(t, dir, f, engine.Options{Mode: engine.ModeAuto, Adhoc: []contracts.Contract{adhoc(t, []string{"src/domain/**"}, "anything")}})
+	if r.ExitCode != 0 {
+		t.Fatalf("explicit scope: %d %v", r.ExitCode, r.Errors)
+	}
+	clash := adhoc(t, []string{"src/**"}, "x")
+	clash.ID = "cart.lines"
+	r = check(t, dir, f, engine.Options{Mode: engine.ModeAuto, Adhoc: []contracts.Contract{clash}})
+	if r.ExitCode != report.ExitUsage || r.Errors[0].Code != "invalid_adhoc" {
+		t.Fatalf("id clash: %d %v", r.ExitCode, r.Errors)
+	}
+}
+
+func TestAdhocChecksWithoutSureDirectory(t *testing.T) {
+	files := baseFiles()
+	for k := range files {
+		if strings.HasPrefix(k, ".sure/") {
+			delete(files, k)
+		}
+	}
+	dir, _ := committedRepo(t, files)
+	testutil.Write(t, dir, "src/features/checkout/finish.ts", finishBad)
+	testutil.Write(t, dir, "src/unrelated.ts", "export const x = 1;\n")
+	r := check(t, dir, &fake.Fake{Decide: decider}, engine.Options{Mode: engine.ModeAuto,
+		Adhoc: []contracts.Contract{adhoc(t, nil, "When order submission fails, existing cart items must remain unchanged.")}})
+	if r.Trust.Mode != "adhoc" || len(r.UnmappedChanges) != 0 || r.ExitCode != report.ExitViolation {
+		t.Fatalf("no .sure/: trust %s unmapped %v exit %d errors %v", r.Trust.Mode, r.UnmappedChanges, r.ExitCode, r.Errors)
+	}
+	r = check(t, dir, &fake.Fake{Decide: decider}, engine.Options{Mode: engine.ModeAuto})
+	if r.ExitCode != report.ExitUsage || r.Errors[0].Code != "not_initialized" {
+		t.Fatalf("no .sure/ and no ad-hoc checks: %d %v", r.ExitCode, r.Errors)
 	}
 }

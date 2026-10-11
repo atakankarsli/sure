@@ -181,9 +181,12 @@ func header(p *prepared) (*report.Snapshot, *report.Trust, *report.Provider) {
 		PolicyVersion:  p.trusted.Config.Policy.Version,
 		MinProbability: p.trusted.Config.Policy.MinSelectedProbability,
 	}
-	if p.opts.Draft {
+	switch {
+	case p.adhocOnly:
+		trust.Mode = "adhoc"
+	case p.opts.Draft:
 		trust.Mode = "draft"
-	} else {
+	default:
 		trust.ContractsRef, trust.ContractsCommit = report.Ptr(p.trustRef), report.Ptr(p.trustCommit)
 	}
 	id := p.identity
@@ -364,6 +367,7 @@ func evidenceReport(p *prepared, results map[string]result) []report.ContractEvi
 	out := []report.ContractEvidence{}
 	for _, cp := range p.plans {
 		ce := report.ContractEvidence{
+			Adhoc:    cp.adhoc,
 			ID:       cp.c.ID,
 			Path:     cp.c.Path,
 			Evidence: cp.c.Evidence,

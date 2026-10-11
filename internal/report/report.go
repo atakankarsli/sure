@@ -142,6 +142,7 @@ type Summary struct {
 
 type ContractEvidence struct {
 	ID              string             `json:"id"`
+	Adhoc           bool               `json:"adhoc"`
 	Path            string             `json:"path"`
 	Evidence        string             `json:"evidence"`
 	Selected        bool               `json:"selected"`

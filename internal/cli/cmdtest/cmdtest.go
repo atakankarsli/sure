@@ -20,10 +20,16 @@ type Result struct {
 // Run executes one CLI invocation. env replaces the process environment
 // entirely; factory may be nil for commands that never build a provider.
 func Run(env map[string]string, factory shared.ProviderFactory, args ...string) Result {
+	return RunWithStdin(env, factory, "", args...)
+}
+
+// RunWithStdin is Run with the given standard input.
+func RunWithStdin(env map[string]string, factory shared.ProviderFactory, stdin string, args ...string) Result {
 	var out, errb bytes.Buffer
 	getenv := func(k string) string { return env[k] }
 	factory.Getenv = getenv
 	deps := shared.Deps{
+		Stdin:    strings.NewReader(stdin),
 		Stdout:   &out,
 		Stderr:   &errb,
 		Getenv:   getenv,

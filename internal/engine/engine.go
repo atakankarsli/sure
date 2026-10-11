@@ -42,6 +42,10 @@ type Options struct {
 	RecordDir    string
 	ReplayDir    string
 	AssessBase   bool
+	// Adhoc holds checks passed for this run only; AdhocArgv reproduces them
+	// in a recheck command.
+	Adhoc     []contracts.Contract
+	AdhocArgv []string
 }
 
 // ProviderSpec is the provider choice after config and flags are merged.
@@ -101,6 +105,8 @@ type prepared struct {
 	trusted      *contracts.Set
 	changes      []contracts.Change
 	snap         *evidence.Snapshot
+	adhoc        []contracts.Contract
+	adhocOnly    bool
 	changed      []gitview.Change
 	changedPaths []string
 	selected     map[string]string
@@ -115,6 +121,7 @@ type prepared struct {
 // contractPlan is the evidence and request for one trusted contract.
 type contractPlan struct {
 	c        contracts.Contract
+	adhoc    bool
 	selected bool
 	by       string
 	bundle   evidence.Bundle
@@ -184,6 +191,9 @@ func prepare(ctx context.Context, opts Options, deps Deps) (*prepared, error) {
 	if err := p.selectContracts(ctx); err != nil {
 		return nil, err
 	}
+	if err := p.addAdhoc(ctx); err != nil {
+		return nil, err
+	}
 
 	p.spec = ProviderSpec{
 		Name:      cfg.Provider.Name,
@@ -213,6 +223,10 @@ func (p *prepared) loadTrust(ctx context.Context) error {
 	}
 	if errors.Is(wtErr, contracts.ErrNotInitialized) && p.opts.ContractsRef == "" {
 		if _, err := p.repo.Worktree().Read(ctx, ".sure", 0); errors.Is(err, gitview.ErrNotFound) {
+			if len(p.opts.Adhoc) > 0 {
+				p.trusted, p.adhocOnly = &contracts.Set{Config: contracts.DefaultConfig()}, true
+				return nil
+			}
 			return fail("not_initialized", report.ExitUsage, "no .sure/ in %s", p.repo.Root)
 		}
 	}
@@ -353,6 +367,57 @@ func (p *prepared) selectContracts(ctx context.Context) error {
 	return nil
 }
 
+// addAdhoc selects the run's ad-hoc checks. Without a scope they read the
+// files that differ from the base.
+func (p *prepared) addAdhoc(ctx context.Context) error {
+	if p.adhocOnly {
+		p.unmapped = nil
+	}
+	for _, c := range p.opts.Adhoc {
+		if _, ok := p.trusted.Contract(c.ID); ok {
+			return fail("invalid_adhoc", report.ExitUsage, "ad-hoc contract id %q is already a trusted contract", c.ID)
+		}
+		if len(c.Scope) == 0 {
+			paths, err := p.changedSource(ctx)
+			if err != nil {
+				return err
+			}
+			if len(paths) == 0 {
+				return fail("adhoc_needs_scope", report.ExitUsage,
+					"no changed source files to check %s against; pass --scope <glob>", c.ID)
+			}
+			for _, x := range paths {
+				c.Scope = append(c.Scope, contracts.EscapeGlob(x))
+			}
+		}
+		p.adhoc = append(p.adhoc, c)
+		p.selected[c.ID] = "adhoc"
+	}
+	return nil
+}
+
+// changedSource lists allowlisted files that differ from the base and still
+// exist.
+func (p *prepared) changedSource(ctx context.Context) ([]string, error) {
+	if p.baseCommit == "" {
+		return nil, nil
+	}
+	changes := p.changed
+	if changes == nil {
+		var err error
+		if changes, err = p.repo.Changes(ctx, p.baseCommit); err != nil {
+			return nil, contextFailure(ctx, err)
+		}
+	}
+	var out []string
+	for _, c := range changes {
+		if c.Status != "D" && p.trusted.Config.Allowed(c.Path) && p.snap.Has(c.Path) {
+			out = append(out, c.Path)
+		}
+	}
+	return out, nil
+}
+
 func (p *prepared) selectAll(by string) {
 	for _, c := range p.trusted.Contracts {
 		p.selected[c.ID] = by
@@ -427,9 +492,10 @@ func (p *prepared) planEvidence(ctx context.Context) error {
 			}
 		}
 	}
-	for _, c := range p.trusted.Contracts {
+	all := append(append([]contracts.Contract{}, p.trusted.Contracts...), p.adhoc...)
+	for i, c := range all {
 		by, sel := p.selected[c.ID]
-		cp := contractPlan{c: c, selected: sel, by: by}
+		cp := contractPlan{c: c, selected: sel, by: by, adhoc: i >= len(p.trusted.Contracts)}
 		if !sel {
 			p.plans = append(p.plans, cp)
 			continue

@@ -60,7 +60,7 @@ func RootUsageFunc(c *ffcli.Command) string {
 		title string
 		names []string
 	}{
-		{"FLAGS", []string{"json", "dry-run", "all", "base", "provider"}},
+		{"FLAGS", []string{"expect", "checks", "scope", "json", "dry-run", "all", "base", "provider"}},
 		{"MORE", []string{"record", "replay", "no-cache", "draft", "contracts-ref", "assess-base", "repo", "timeout", "verbose", "version"}},
 	} {
 		b.WriteString("\n" + g.title + "\n")
