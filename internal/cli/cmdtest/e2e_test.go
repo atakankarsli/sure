@@ -207,74 +207,82 @@ func singleJSON(t *testing.T, stdout string) map[string]any {
 }
 
 func TestHelpVersionAndUsageErrors(t *testing.T) {
+	testutil.Isolate(t)
 	r := Run(nil, shared.ProviderFactory{}, "--version")
 	if r.ExitCode != 0 || strings.TrimSpace(r.Stdout) != "test-version" {
 		t.Fatalf("--version: %+v", r)
 	}
-	r = Run(nil, shared.ProviderFactory{}, "version")
-	if r.ExitCode != 0 || strings.TrimSpace(r.Stdout) != "test-version" {
-		t.Fatalf("version: %+v", r)
-	}
-	for _, args := range [][]string{{"--help"}, {}, {"check", "--help"}, {"contracts", "validate", "-h"}} {
+	for _, args := range [][]string{{"--help"}, {"check", "--help"}, {"validate", "-h"}, {"init", "--help"}} {
 		r = Run(nil, shared.ProviderFactory{}, args...)
 		if r.ExitCode != 0 || !strings.Contains(r.Stdout, "USAGE") {
 			t.Fatalf("%v: %+v", args, r)
 		}
 	}
-	r = Run(nil, shared.ProviderFactory{}, "bogus")
-	if r.ExitCode != 2 || r.Stdout != "" || !strings.Contains(r.Stderr, "unknown command") {
-		t.Fatalf("unknown command: %+v", r)
+	r = Run(nil, shared.ProviderFactory{}, "--help")
+	for _, want := range []string{"sure init", "sure validate", "sure doctor", "--json", "--dry-run"} {
+		if !strings.Contains(r.Stdout, want) {
+			t.Errorf("help lacks %q", want)
+		}
 	}
-	r = Run(nil, shared.ProviderFactory{}, "check", "--no-such-flag")
+	empty := t.TempDir()
+	r = Run(nil, shared.ProviderFactory{}, "--repo", empty)
+	if r.ExitCode != 2 || !strings.Contains(r.Stdout, "sure init") {
+		t.Fatalf("bare sure without .sure/: %+v", r)
+	}
+	r = Run(nil, shared.ProviderFactory{}, "--repo", empty, "--no-such-flag")
 	if r.ExitCode != 2 || r.Stdout != "" {
 		t.Fatalf("bad flag must not print to stdout: %+v", r)
 	}
-	r = Run(nil, shared.ProviderFactory{}, "contracts")
-	if r.ExitCode != 2 {
-		t.Fatalf("bare contracts: %+v", r)
-	}
 }
 
-func TestCheckEndToEndOverHTTP(t *testing.T) {
+func TestBareSureEndToEndOverHTTP(t *testing.T) {
 	dir := repo(t)
 	srv := newJevServer(t)
 
-	r := Run(env(t), srv.factory(), "check", "--repo", dir, "--all", "--output", "json")
+	r := Run(env(t), srv.factory(), "--repo", dir, "--json")
 	if r.ExitCode != 0 {
 		t.Fatalf("clean run exit %d\nstdout %s\nstderr %s", r.ExitCode, r.Stdout, r.Stderr)
 	}
 	m := validateRun(t, r.Stdout)
-	if m["gate"] != "clear" || m["provider"].(map[string]any)["returned_models"].([]any)[0] != "jev-1.13.0" {
-		t.Fatalf("clean run: %v", m)
+	conf := m["confidence"].(map[string]any)
+	if m["gate"] != "clear" || conf["percent"] != float64(96) || m["snapshot"].(map[string]any)["selection"] != "all_no_changes" {
+		t.Fatalf("clean run: gate %v confidence %v snapshot %v", m["gate"], conf, m["snapshot"])
 	}
 	if len(srv.bodies) != 1 || srv.auth[0] != "Bearer "+testKey {
 		t.Fatalf("requests %d auth %q", len(srv.bodies), srv.auth)
 	}
-	if strings.Contains(srv.bodies[0], "SECRET-ORACLE") || !strings.Contains(srv.bodies[0], `"providerOptions":{"gateway":{"only":["typesafe-ai"]}}`) {
-		t.Fatalf("request body leaked a test file or lost upstream pinning: %s", srv.bodies[0])
+	if strings.Contains(srv.bodies[0], "SECRET-ORACLE") || !strings.Contains(srv.bodies[0], `"only":["typesafe-ai"]`) {
+		t.Fatalf("request leaked a test file or lost upstream pinning: %s", srv.bodies[0])
 	}
 
 	testutil.Write(t, dir, "src/checkout/finish.ts", badFinish)
-	r = Run(env(t), srv.factory(), "check", "--repo", dir, "--changed", "--output", "json")
+	r = Run(env(t), srv.factory(), "--repo", dir, "--json")
 	if r.ExitCode != 1 {
 		t.Fatalf("violation exit %d\n%s\n%s", r.ExitCode, r.Stdout, r.Stderr)
 	}
 	m = validateRun(t, r.Stdout)
-	checks := m["checks"].([]any)
-	first := checks[0].(map[string]any)
-	if first["verdict"] != "violated" || first["locations"].([]any)[0].(map[string]any)["role"] != "model_selected" {
-		t.Fatalf("violation: %v", first)
+	first := m["checks"].([]any)[0].(map[string]any)
+	if first["verdict"] != "violated" || first["locations"].([]any)[0].(map[string]any)["role"] != "model_selected" ||
+		m["confidence"].(map[string]any)["percent"] != float64(2) || m["snapshot"].(map[string]any)["selection"] != "changed" {
+		t.Fatalf("violation: %v confidence %v", first, m["confidence"])
 	}
 
-	for _, format := range []string{"markdown", "table"} {
-		r = Run(env(t), srv.factory(), "check", "--repo", dir, "--changed", "--output", format)
-		if r.ExitCode != 1 || !strings.Contains(r.Stdout, "checkout.failure/CHK-001") {
-			t.Fatalf("%s output: %+v", format, r)
-		}
+	r = Run(env(t), srv.factory(), "--repo", dir)
+	if r.ExitCode != 1 || !strings.Contains(r.Stdout, "2% sure") || !strings.Contains(r.Stdout, "✗ checkout.failure") ||
+		!strings.Contains(r.Stdout, "→ src/checkout/finish.ts") || strings.Contains(r.Stdout, "\x1b[") {
+		t.Fatalf("human output:\n%s", r.Stdout)
+	}
+	r = Run(env(t), srv.factory(), "checkout", "--repo", dir, "--json")
+	if r.ExitCode != 1 || validateRun(t, r.Stdout)["snapshot"].(map[string]any)["selection"] != "contract" {
+		t.Fatalf("prefix selection: %+v", r)
+	}
+	r = Run(env(t), srv.factory(), "check", "--repo", dir, "--json")
+	if r.ExitCode != 1 {
+		t.Fatalf("check alias: %+v", r)
 	}
 }
 
-func TestCheckErrorsStayInsideTheJSONEnvelope(t *testing.T) {
+func TestErrorsStayInsideTheJSONEnvelope(t *testing.T) {
 	dir := repo(t)
 	srv := newJevServer(t)
 	cases := []struct {
@@ -284,17 +292,15 @@ func TestCheckErrorsStayInsideTheJSONEnvelope(t *testing.T) {
 		exit int
 		code string
 	}{
-		{"two modes", env(t), []string{"--all", "--changed"}, 2, "invalid_flags"},
-		{"no mode", env(t), nil, 2, "invalid_flags"},
-		{"base without changed", env(t), []string{"--all", "--base", "main"}, 2, "invalid_flags"},
-		{"bad provider", env(t), []string{"--all", "--provider", "openai"}, 2, "invalid_flags"},
-		{"missing key", map[string]string{"SURE_CACHE_DIR": t.TempDir()}, []string{"--all"}, 2, "missing_api_key"},
-		{"unknown contract", env(t), []string{"--contract", "nope"}, 2, "unknown_contract"},
-		{"bad base", env(t), []string{"--changed", "--base", "--upload-pack=x"}, 2, "invalid_base"},
-		{"replay without dir", env(t), []string{"--all", "--provider", "replay"}, 2, "missing_recordings"},
+		{"all and names", env(t), []string{"--all", "checkout"}, 2, "invalid_flags"},
+		{"bad provider", env(t), []string{"--provider", "openai"}, 2, "invalid_flags"},
+		{"replay and provider", env(t), []string{"--replay", t.TempDir(), "--provider", "jev"}, 2, "invalid_flags"},
+		{"missing key", map[string]string{"SURE_CACHE_DIR": t.TempDir()}, nil, 2, "missing_api_key"},
+		{"unknown contract", env(t), []string{"nope"}, 2, "unknown_contract"},
+		{"bad base", env(t), []string{"--base", "--upload-pack=x"}, 2, "invalid_base"},
 	}
 	for _, tc := range cases {
-		args := append([]string{"check", "--repo", dir, "--output", "json"}, tc.args...)
+		args := append([]string{"--repo", dir, "--json"}, tc.args...)
 		r := Run(tc.env, srv.factory(), args...)
 		if r.ExitCode != tc.exit {
 			t.Errorf("%s: exit %d want %d\n%s", tc.name, r.ExitCode, tc.exit, r.Stdout)
@@ -311,7 +317,7 @@ func TestCheckErrorsStayInsideTheJSONEnvelope(t *testing.T) {
 	}
 
 	srv.status = http.StatusTooManyRequests
-	r := Run(env(t), srv.factory(), "check", "--repo", dir, "--all", "--output", "json", "--no-cache")
+	r := Run(env(t), srv.factory(), "--repo", dir, "--json", "--no-cache")
 	if r.ExitCode != 11 {
 		t.Fatalf("rate limit exit %d\n%s", r.ExitCode, r.Stdout)
 	}
@@ -321,13 +327,27 @@ func TestCheckErrorsStayInsideTheJSONEnvelope(t *testing.T) {
 	}
 }
 
-func TestInitValidatePlanDoctorSchema(t *testing.T) {
+func TestReplayNeedsNoKeyAndNoNetwork(t *testing.T) {
+	dir := repo(t)
+	srv := newJevServer(t)
+	rec := t.TempDir()
+	if r := Run(env(t), srv.factory(), "--repo", dir, "--json", "--record", rec); r.ExitCode != 0 {
+		t.Fatalf("record: %+v", r)
+	}
+	calls := len(srv.bodies)
+	r := Run(map[string]string{"SURE_CACHE_DIR": t.TempDir()}, srv.factory(), "--repo", dir, "--json", "--replay", rec)
+	if r.ExitCode != 0 || len(srv.bodies) != calls || validateRun(t, r.Stdout)["provider"].(map[string]any)["mode"] != "replay" {
+		t.Fatalf("replay: exit %d calls %d->%d\n%s", r.ExitCode, calls, len(srv.bodies), r.Stdout)
+	}
+}
+
+func TestInitValidateDryRunDoctorSchema(t *testing.T) {
 	testutil.Isolate(t)
 	dir := testutil.NewRepo(t)
 	testutil.Write(t, dir, "src/a.ts", "export const a = 1;\n")
 	testutil.Write(t, dir, ".sure/contract-template.md", "mine\n")
 
-	r := Run(nil, shared.ProviderFactory{}, "init", "--repo", dir, "--output", "json")
+	r := Run(nil, shared.ProviderFactory{}, "init", "--repo", dir, "--json")
 	m := singleJSON(t, r.Stdout)
 	if r.ExitCode != 0 || len(m["created"].([]any)) != 3 || m["existing"].([]any)[0] != ".sure/contract-template.md" {
 		t.Fatalf("init: %+v", r)
@@ -339,58 +359,54 @@ func TestInitValidatePlanDoctorSchema(t *testing.T) {
 	if !strings.Contains(string(cfg), "  - src\n") {
 		t.Fatalf("init did not detect src/: %s", cfg)
 	}
-	r = Run(nil, shared.ProviderFactory{}, "init", "--repo", dir, "--output", "json")
-	if r.ExitCode != 0 || len(singleJSON(t, r.Stdout)["created"].([]any)) != 0 {
+	r = Run(nil, shared.ProviderFactory{}, "init", "--repo", dir)
+	if r.ExitCode != 0 || !strings.Contains(r.Stdout, "(kept)") {
 		t.Fatalf("second init: %+v", r)
 	}
 
 	testutil.Write(t, dir, ".sure/contracts/a.md", contractMD)
 	testutil.Write(t, dir, "src/cart.ts", "x\n")
 	testutil.Write(t, dir, "src/checkout/finish.ts", goodFinish)
-	r = Run(nil, shared.ProviderFactory{}, "contracts", "validate", "--repo", dir, "--output", "json")
+	r = Run(nil, shared.ProviderFactory{}, "validate", "--repo", dir, "--json")
 	if r.ExitCode != 0 || singleJSON(t, r.Stdout)["valid"] != true {
 		t.Fatalf("validate: %+v", r)
 	}
 	testutil.Write(t, dir, ".sure/contracts/b.md", strings.Replace(contractMD, "severity: error", "severity: high", 1))
-	r = Run(nil, shared.ProviderFactory{}, "contracts", "validate", "--repo", dir, "--output", "json")
-	if r.ExitCode != 2 || singleJSON(t, r.Stdout)["valid"] != false {
+	r = Run(nil, shared.ProviderFactory{}, "validate", "--repo", dir)
+	if r.ExitCode != 2 || !strings.Contains(r.Stdout, "severity must be error or warning") {
 		t.Fatalf("invalid contract: %+v", r)
 	}
 	if err := os.Remove(filepath.Join(dir, ".sure/contracts/b.md")); err != nil {
 		t.Fatal(err)
 	}
 
-	r = Run(nil, shared.ProviderFactory{}, "plan", "--repo", dir, "--all", "--output", "json")
+	r = Run(nil, shared.ProviderFactory{}, "--repo", dir, "--dry-run", "--json")
 	if r.ExitCode != 2 || !strings.Contains(r.Stdout, "no_trusted_base") {
-		t.Fatalf("plan before any commit: %+v", r)
+		t.Fatalf("dry run before any commit: %+v", r)
 	}
-	r = Run(nil, shared.ProviderFactory{}, "plan", "--repo", dir, "--all", "--draft", "--output", "json")
+	r = Run(nil, shared.ProviderFactory{}, "--repo", dir, "--dry-run", "--draft", "--json")
 	p := singleJSON(t, r.Stdout)
 	if r.ExitCode != 0 || p["summary"].(map[string]any)["requests"] != float64(1) {
-		t.Fatalf("draft plan: %+v", r)
+		t.Fatalf("draft dry run: %+v", r)
+	}
+	r = Run(nil, shared.ProviderFactory{}, "--repo", dir, "--dry-run", "--draft")
+	if !strings.Contains(r.Stdout, "no model call made") {
+		t.Fatalf("dry run human: %s", r.Stdout)
 	}
 
 	srv := newJevServer(t)
-	r = Run(map[string]string{"SURE_CACHE_DIR": t.TempDir()}, srv.factory(), "doctor", "--repo", dir, "--output", "json")
+	r = Run(map[string]string{"SURE_CACHE_DIR": t.TempDir()}, srv.factory(), "doctor", "--repo", dir, "--json")
 	d := singleJSON(t, r.Stdout)
 	if r.ExitCode != 2 || d["ok"] != false || !strings.Contains(r.Stdout, "AI_GATEWAY_API_KEY is not set") {
 		t.Fatalf("doctor without key: %+v", r)
 	}
-	r = Run(env(t), srv.factory(), "doctor", "--repo", dir, "--live", "--output", "json")
-	if r.ExitCode != 0 || !strings.Contains(r.Stdout, `"live_probe"`) || len(srv.bodies) != 1 || strings.Contains(srv.bodies[0], "src/") {
+	r = Run(env(t), srv.factory(), "doctor", "--repo", dir, "--live")
+	if r.ExitCode != 0 || !strings.Contains(r.Stdout, "live_probe") || len(srv.bodies) != 1 || strings.Contains(srv.bodies[0], "src/") {
 		t.Fatalf("doctor --live: %+v bodies %v", r, srv.bodies)
-	}
-	r = Run(env(t, "SURE_ANTHROPIC_API_KEY", ""), srv.factory(), "doctor", "--repo", dir, "--provider", "anthropic", "--output", "json")
-	if !strings.Contains(r.Stdout, "SURE_ANTHROPIC_API_KEY is not set") {
-		t.Fatalf("doctor anthropic: %+v", r)
 	}
 
 	r = Run(nil, shared.ProviderFactory{}, "schema")
 	if r.ExitCode != 0 || !strings.Contains(r.Stdout, "urn:sure:run-result:v1") {
 		t.Fatalf("schema: %+v", r)
-	}
-	r = Run(nil, shared.ProviderFactory{}, "schema", "nope")
-	if r.ExitCode != 2 {
-		t.Fatalf("unknown schema: %+v", r)
 	}
 }

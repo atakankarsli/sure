@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:sure:run-result:v1",
   "title": "Sure run result v1",
-  "description": "Output of `sure check --output json`. Versioned independently of the binary. Semantic rules not expressible here: summary counts add up to total, exit_code follows gate, and operational exit codes take precedence over violations, which take precedence over incompleteness.",
+  "description": "Output of `sure --json`. Versioned independently of the binary. `confidence` is the lowest P(supported) across selected checks (undecided checks count as 0); it is null when a provider failed or nothing was checked. Exit codes: operational failures outrank violations, which outrank incompleteness.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -11,6 +11,7 @@
     "status",
     "gate",
     "exit_code",
+    "confidence",
     "snapshot",
     "trust",
     "provider",
@@ -62,6 +63,42 @@
         130
       ]
     },
+    "confidence": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "percent",
+            "probability",
+            "basis",
+            "undecided"
+          ],
+          "properties": {
+            "percent": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "probability": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "basis": {
+              "type": "string"
+            },
+            "undecided": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      ]
+    },
     "snapshot": {
       "oneOf": [
         {
@@ -73,6 +110,7 @@
           "required": [
             "kind",
             "scope",
+            "selection",
             "base_ref",
             "base_commit",
             "head_commit",
@@ -125,6 +163,15 @@
             },
             "application_executed": {
               "const": false
+            },
+            "selection": {
+              "enum": [
+                "changed",
+                "all",
+                "all_no_changes",
+                "all_no_base",
+                "contract"
+              ]
             }
           }
         }
@@ -143,7 +190,8 @@
             "contracts_ref",
             "contracts_commit",
             "contract_digest",
-            "policy_version"
+            "policy_version",
+            "min_probability"
           ],
           "properties": {
             "mode": {
@@ -171,6 +219,11 @@
             },
             "policy_version": {
               "type": "string"
+            },
+            "min_probability": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
             }
           }
         }
@@ -461,7 +514,8 @@
         "state_bytes",
         "request_bytes",
         "estimated_tokens",
-        "decision"
+        "decision",
+        "confidence"
       ],
       "properties": {
         "id": {
@@ -514,6 +568,18 @@
         },
         "decision": {
           "type": "string"
+        },
+        "confidence": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          ]
         }
       }
     },
@@ -604,6 +670,7 @@
         "message",
         "message_origin",
         "analysis_level",
+        "confidence",
         "probabilities",
         "probability_source",
         "model_confidence",
@@ -656,6 +723,18 @@
             "text-scoped",
             "syntax",
             "semantic"
+          ]
+        },
+        "confidence": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
           ]
         },
         "probabilities": {

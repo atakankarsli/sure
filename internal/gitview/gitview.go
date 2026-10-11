@@ -167,6 +167,22 @@ func (r *Repo) Head(ctx context.Context) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// DefaultBase names the ref changes are compared against: the remote's default
+// branch, else a local main or master, else HEAD.
+func (r *Repo) DefaultBase(ctx context.Context) string {
+	if out, err := r.run(ctx, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"); err == nil {
+		if ref := strings.TrimSpace(string(out)); ref != "" {
+			return ref
+		}
+	}
+	for _, ref := range []string{"origin/main", "origin/master", "main", "master"} {
+		if _, err := r.ResolveCommit(ctx, ref); err == nil {
+			return ref
+		}
+	}
+	return "HEAD"
+}
+
 func (r *Repo) MergeBase(ctx context.Context, a, b string) (string, error) {
 	out, err := r.run(ctx, "merge-base", "--end-of-options", a, b)
 	if err != nil {

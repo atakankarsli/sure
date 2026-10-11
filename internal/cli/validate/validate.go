@@ -1,5 +1,5 @@
-// Package contractscmd implements `sure contracts` and its subcommands.
-package contractscmd
+// Package validate implements `sure validate`.
+package validate
 
 import (
 	"context"
@@ -17,40 +17,21 @@ import (
 )
 
 func Command(deps shared.Deps) *ffcli.Command {
-	fs := flag.NewFlagSet("contracts", flag.ContinueOnError)
-	return &ffcli.Command{
-		Name:        "contracts",
-		ShortUsage:  "sure contracts <subcommand> [flags]",
-		ShortHelp:   "Work with feature contracts.",
-		FlagSet:     fs,
-		UsageFunc:   shared.DefaultUsageFunc,
-		Subcommands: []*ffcli.Command{validateCommand(deps)},
-		Exec: func(context.Context, []string) error {
-			return flag.ErrHelp
-		},
-	}
-}
-
-func validateCommand(deps shared.Deps) *ffcli.Command {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	repo := fs.String("repo", ".", "Repository to read")
 	ref := fs.String("ref", "", "Validate the contracts committed at this ref instead of the working tree")
-	output := shared.BindOutput(fs, deps.Getenv)
+	asJSON := fs.Bool("json", false, "Print one JSON document")
 	return &ffcli.Command{
 		Name:       "validate",
-		ShortUsage: "sure contracts validate --repo <dir> [--ref <ref>] [--output json]",
-		ShortHelp:  "Strictly validate the config and every contract, offline.",
+		ShortUsage: "sure validate [--ref <ref>] [--json]",
+		ShortHelp:  "Check .sure/ config and contracts for mistakes, offline.",
 		FlagSet:    fs,
 		UsageFunc:  shared.DefaultUsageFunc,
 		Exec: func(ctx context.Context, args []string) error {
-			format, err := shared.NormalizeFormat(*output)
-			if err != nil {
-				return err
-			}
 			v := report.Validation{SchemaVersion: report.ValidationSchema, Source: "worktree",
 				Contracts: []report.ValidatedContract{}, Issues: []contracts.Issue{}, Errors: []report.Error{}}
-			if err := shared.RejectArgs(args); err != nil {
-				v.Errors = append(v.Errors, report.Error{Code: "invalid_flags", Message: err.Error()})
+			if len(args) > 0 {
+				v.Errors = append(v.Errors, report.Error{Code: "invalid_flags", Message: "unexpected argument " + args[0]})
 			} else if err := validate(ctx, *repo, *ref, &v); err != nil {
 				v.Errors = append(v.Errors, report.Error{Code: "unreadable", Message: err.Error()})
 			}
@@ -58,11 +39,7 @@ func validateCommand(deps shared.Deps) *ffcli.Command {
 			if !v.Valid {
 				v.ExitCode = report.ExitUsage
 			}
-			var md func() string
-			if format != shared.FormatJSON {
-				md = func() string { return markdown(v) }
-			}
-			if err := shared.Print(deps.Stdout, format, v, md); err != nil {
+			if err := shared.Print(deps.Stdout, *asJSON, v, func() string { return human(v, deps.Style()) }); err != nil {
 				return err
 			}
 			return shared.Exit(v.ExitCode)
@@ -102,25 +79,25 @@ func validate(ctx context.Context, dir, ref string, v *report.Validation) error 
 	return nil
 }
 
-func markdown(v report.Validation) string {
+func human(v report.Validation, st report.Style) string {
 	var b strings.Builder
 	if v.Valid {
 		n := 0
 		for _, c := range v.Contracts {
 			n += len(c.Checks)
 		}
-		fmt.Fprintf(&b, "Contracts are valid: %d contracts, %d checks (%s).\n", len(v.Contracts), n, v.Source)
+		fmt.Fprintf(&b, "%s %d contracts, %d checks are valid\n", st.Green("✓"), len(v.Contracts), n)
 		for _, c := range v.Contracts {
-			fmt.Fprintf(&b, "- %s (%s, %s): %s\n", c.ID, c.Severity, c.Evidence, strings.Join(c.Checks, ", "))
+			fmt.Fprintf(&b, "  %s %s\n", c.ID, st.Dim(fmt.Sprintf("%d checks · %s · %s", len(c.Checks), c.Severity, c.Evidence)))
 		}
 		return b.String()
 	}
-	fmt.Fprintf(&b, "Contracts are invalid (%s):\n", v.Source)
+	fmt.Fprintf(&b, "%s .sure/ has %d problems\n", st.Red("✗"), len(v.Issues)+len(v.Errors))
 	for _, is := range v.Issues {
-		fmt.Fprintf(&b, "- %s [%s]\n", is.String(), is.Code)
+		fmt.Fprintf(&b, "  %s %s\n", is.String(), st.Dim("["+is.Code+"]"))
 	}
 	for _, e := range v.Errors {
-		fmt.Fprintf(&b, "- %s [%s]\n", e.Message, e.Code)
+		fmt.Fprintf(&b, "  %s %s\n", e.Message, st.Dim("["+e.Code+"]"))
 	}
 	return b.String()
 }

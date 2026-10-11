@@ -67,6 +67,7 @@ func Check(ctx context.Context, opts Options, deps Deps) report.Run {
 	var evaluated int
 	run.Checks, run.Errors, evaluated = buildChecks(p, results, base)
 	run.Contracts = evidenceReport(p, results)
+	run.Confidence = confidence(run.Checks, run.Contracts)
 	run.Summary = summarize(run.Checks, evaluated)
 	addUsage(run.Provider, p, results)
 	run.NextActions = topLevelActions(p)
@@ -155,15 +156,21 @@ func header(p *prepared) (*report.Snapshot, *report.Trust, *report.Provider) {
 	snap := &report.Snapshot{
 		Kind:         "worktree",
 		Scope:        p.opts.Mode,
+		Selection:    p.opts.Mode,
 		SourceDigest: p.snap.Digest(),
 		ChangedPaths: nonNil(p.changedPaths),
 	}
-	if p.opts.Mode == ModeChanged {
-		ref := p.opts.BaseRef
-		if ref == "" {
-			ref = "HEAD"
+	if p.opts.Mode == ModeAuto {
+		snap.Scope, snap.Selection = ModeChanged, ModeChanged
+		if p.autoAll {
+			snap.Scope, snap.Selection = ModeAll, "all_no_changes"
+			if p.baseCommit == "" {
+				snap.Selection = "all_no_base"
+			}
 		}
-		snap.BaseRef, snap.BaseCommit = report.Ptr(ref), report.Ptr(p.baseCommit)
+	}
+	if p.baseCommit != "" {
+		snap.BaseRef, snap.BaseCommit = report.Ptr(p.baseName), report.Ptr(p.baseCommit)
 	}
 	if p.head != "" {
 		snap.HeadCommit = report.Ptr(p.head)
@@ -172,6 +179,7 @@ func header(p *prepared) (*report.Snapshot, *report.Trust, *report.Provider) {
 		Mode:           "protected",
 		ContractDigest: p.trusted.Digest(),
 		PolicyVersion:  p.trusted.Config.Policy.Version,
+		MinProbability: p.trusted.Config.Policy.MinSelectedProbability,
 	}
 	if p.opts.Draft {
 		trust.Mode = "draft"
@@ -260,10 +268,13 @@ func evaluate(ctx context.Context, p *prepared, prov provider.Provider, deps Dep
 			mu.Lock()
 			out[cp.c.ID] = result{resp: resp, err: err}
 			mu.Unlock()
+			if deps.Progress == nil {
+				return
+			}
 			if err != nil {
-				fmt.Fprintf(deps.Stderr, "sure: %s: %v\n", cp.c.ID, err)
+				fmt.Fprintf(deps.Progress, "sure: %s: %v\n", cp.c.ID, err)
 			} else {
-				fmt.Fprintf(deps.Stderr, "sure: %s: %d checks (%s)\n", cp.c.ID, len(cp.c.Checks), resp.Source)
+				fmt.Fprintf(deps.Progress, "sure: %s: %d checks (%s)\n", cp.c.ID, len(cp.c.Checks), resp.Source)
 			}
 		}(cp)
 	}
@@ -377,6 +388,49 @@ func evidenceReport(p *prepared, results map[string]result) []report.ContractEvi
 		out = append(out, ce)
 	}
 	return out
+}
+
+// confidence fills each contract's lowest check confidence and returns the
+// run's. A provider error leaves the affected contract, and the run, without a
+// number: nothing was decided.
+func confidence(checks []report.Check, contracts []report.ContractEvidence) *report.Confidence {
+	perContract := map[string]*float64{}
+	failed := map[string]bool{}
+	var lowest *float64
+	undecided, selected := 0, 0
+	for _, c := range checks {
+		switch c.Verdict {
+		case report.VerdictNotChecked:
+			continue
+		case report.VerdictError:
+			failed[c.Contract] = true
+			selected++
+			continue
+		}
+		selected++
+		if c.Confidence == nil {
+			continue
+		}
+		v := *c.Confidence
+		if c.Probabilities == nil {
+			undecided++
+		}
+		if cur, ok := perContract[c.Contract]; !ok || v < *cur {
+			perContract[c.Contract] = report.Ptr(v)
+		}
+		if lowest == nil || v < *lowest {
+			lowest = report.Ptr(v)
+		}
+	}
+	for i := range contracts {
+		if v, ok := perContract[contracts[i].ID]; ok && !failed[contracts[i].ID] {
+			contracts[i].Confidence = v
+		}
+	}
+	if lowest == nil || len(failed) > 0 || selected == 0 {
+		return nil
+	}
+	return &report.Confidence{Percent: report.Percent(*lowest), Probability: *lowest, Basis: report.ConfidenceBasis, Undecided: undecided}
 }
 
 func addUsage(prov *report.Provider, p *prepared, results map[string]result) {

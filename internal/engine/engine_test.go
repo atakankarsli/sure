@@ -230,7 +230,7 @@ func TestViolationIsLocatedAndExitsOne(t *testing.T) {
 			argv = a.Argv
 		}
 	}
-	want := []string{"sure", "check", "--repo", dir, "--contract", "checkout.failure", "--contracts-ref", head, "--output", "json"}
+	want := []string{"sure", "checkout.failure", "--repo", dir, "--contracts-ref", head, "--json"}
 	if strings.Join(argv, " ") != strings.Join(want, " ") {
 		t.Fatalf("recheck %v", argv)
 	}
@@ -616,5 +616,59 @@ func TestPlanDoesNotCallProvider(t *testing.T) {
 	p := engine.Plan(context.Background(), engine.Options{Repo: dir, Mode: engine.ModeAll}, deps(f, nil))
 	if f.Calls() != 0 || p.Summary.Requests != 2 || p.Summary.WouldEvaluate != 5 || p.ExitCode != 0 {
 		t.Fatalf("plan %+v calls %d", p.Summary, f.Calls())
+	}
+}
+
+func TestAutoModeSelectionAndConfidence(t *testing.T) {
+	dir, _ := committedRepo(t, baseFiles())
+	f := &fake.Fake{Decide: decider}
+	auto := engine.Options{Mode: engine.ModeAuto}
+
+	r := check(t, dir, f, auto)
+	if r.Snapshot.Selection != "all_no_changes" || r.Summary.Selected != 5 || *r.Snapshot.BaseRef != "main" {
+		t.Fatalf("no changes: selection %s selected %d base %v", r.Snapshot.Selection, r.Summary.Selected, r.Snapshot.BaseRef)
+	}
+	if r.Confidence == nil || r.Confidence.Percent != 96 || r.Contracts[0].Confidence == nil {
+		t.Fatalf("clean confidence %+v", r.Confidence)
+	}
+
+	testutil.Write(t, dir, "src/features/checkout/finish.ts", finishBad)
+	r = check(t, dir, f, auto)
+	if r.Snapshot.Selection != "changed" || r.Summary.Selected != 3 || r.Summary.NotChecked != 2 {
+		t.Fatalf("changed: %s %+v", r.Snapshot.Selection, r.Summary)
+	}
+	if r.Confidence.Percent != 2 || r.ExitCode != report.ExitViolation {
+		t.Fatalf("violation confidence %+v exit %d", r.Confidence, r.ExitCode)
+	}
+	for _, c := range r.Contracts {
+		if c.ID == "cart.lines" && c.Confidence != nil {
+			t.Fatal("an unselected contract got a confidence")
+		}
+	}
+
+	testutil.Write(t, dir, "src/features/checkout/finish.ts", finishGood)
+	if err := os.Remove(filepath.Join(dir, "src/domain/orders.ts")); err != nil {
+		t.Fatal(err)
+	}
+	r = check(t, dir, f, engine.Options{Mode: engine.ModeContract, Contracts: []string{"checkout"}})
+	if r.Confidence == nil || r.Confidence.Percent != 0 || r.Confidence.Undecided != 3 || r.Snapshot.Selection != "contract" {
+		t.Fatalf("undecided checks must count as 0: %+v", r.Confidence)
+	}
+
+	r = check(t, dir, byContract{map[string]error{"cart.lines": provider.Errorf(provider.ErrTransport, "down")}}, engine.Options{Mode: engine.ModeAll})
+	if r.Confidence != nil {
+		t.Fatalf("a provider failure must leave no confidence: %+v", r.Confidence)
+	}
+}
+
+func TestContractPrefixSelection(t *testing.T) {
+	dir, _ := committedRepo(t, baseFiles())
+	r := check(t, dir, &fake.Fake{Decide: decider}, engine.Options{Mode: engine.ModeContract, Contracts: []string{"cart", "checkout.failure/CHK-002"}})
+	if r.Summary.Selected != 5 {
+		t.Fatalf("prefix and check-id selection: %+v", r.Summary)
+	}
+	r = check(t, dir, &fake.Fake{Decide: decider}, engine.Options{Mode: engine.ModeContract, Contracts: []string{"car"}})
+	if r.ExitCode != report.ExitUsage || !strings.Contains(r.Errors[0].Message, "known: cart.lines, checkout.failure") {
+		t.Fatalf("partial word must not match: %d %v", r.ExitCode, r.Errors)
 	}
 }

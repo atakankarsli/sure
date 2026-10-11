@@ -71,6 +71,7 @@ func buildChecks(p *prepared, results map[string]result, base map[string]string)
 				}
 			case cp.preset != nil:
 				out.Verdict, out.ReasonCode, out.Message = cp.preset.verdict, cp.preset.reason, cp.preset.message
+				out.Confidence = report.Ptr(0.0)
 				out.NextActions = append(out.NextActions, cp.preset.actions...)
 				out.NextActions = append(out.NextActions, recheck(p, cp.c.ID))
 			case called && r.err != nil:
@@ -97,6 +98,7 @@ func fillDecision(out *report.Check, p *prepared, cp contractPlan, resp provider
 	a := resp.Answers[cp.req.assessIDs[i]]
 	verdict, reason, prob := decide(pol, a)
 	out.Verdict, out.ReasonCode = verdict, reason
+	out.Confidence = report.Ptr(a.Probabilities[LabelSupported])
 	out.Probabilities = &report.Probabilities{
 		Supported: a.Probabilities[LabelSupported],
 		Violated:  a.Probabilities[LabelViolated],
@@ -176,17 +178,17 @@ func fileByID(b evidence.Bundle, id string) evidence.File {
 // recheck preserves the repository, trust and provider of this run so the
 // next agent checks the same immutable expectation.
 func recheck(p *prepared, contractID string) report.Action {
-	argv := []string{"sure", "check", "--repo", p.opts.Repo, "--contract", contractID}
+	argv := []string{"sure", contractID, "--repo", p.opts.Repo}
 	if p.opts.Draft {
 		argv = append(argv, "--draft")
 	} else {
 		argv = append(argv, "--contracts-ref", p.trustCommit)
 	}
-	if p.opts.Provider != "" {
+	switch {
+	case p.opts.Provider == provider.NameReplay:
+		argv = append(argv, "--replay", p.opts.ReplayDir)
+	case p.opts.Provider != "":
 		argv = append(argv, "--provider", p.opts.Provider)
-		if p.opts.Provider == provider.NameReplay {
-			argv = append(argv, "--recordings", p.opts.ReplayDir)
-		}
 	}
-	return report.Action{Kind: report.ActionRecheck, Argv: append(argv, "--output", "json")}
+	return report.Action{Kind: report.ActionRecheck, Argv: append(argv, "--json")}
 }

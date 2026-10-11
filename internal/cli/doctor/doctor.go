@@ -33,35 +33,27 @@ func Command(deps shared.Deps) *ffcli.Command {
 	repo := fs.String("repo", ".", "Repository to inspect")
 	prov := fs.String("provider", "", "Provider to inspect: jev or anthropic (default: from config)")
 	live := fs.Bool("live", false, "Send one tiny synthetic request (no source) to verify the key and endpoint")
-	output := shared.BindOutput(fs, deps.Getenv)
+	asJSON := fs.Bool("json", false, "Print one JSON document")
 	return &ffcli.Command{
 		Name:       "doctor",
-		ShortUsage: "sure doctor --repo <dir> [--provider jev|anthropic] [--live] [--output json]",
-		ShortHelp:  "Check Git, config, trusted contracts, provider key and cache.",
+		ShortUsage: "sure doctor [--live] [--provider jev|anthropic] [--json]",
+		ShortHelp:  "Check setup: Git, contracts, provider key; --live tests the model.",
 		LongHelp: `Offline by default. With --live, sends one synthetic question that contains
 no source code to the configured provider. Keys are reported as set or unset,
 never printed.`,
 		FlagSet:   fs,
 		UsageFunc: shared.DefaultUsageFunc,
 		Exec: func(ctx context.Context, args []string) error {
-			format, err := shared.NormalizeFormat(*output)
-			if err != nil {
-				return err
-			}
 			d := report.Doctor{SchemaVersion: report.DoctorSchema, Checks: []report.DoctorCheck{}, Errors: []report.Error{}}
 			exit := report.ExitClear
-			if err := shared.RejectArgs(args); err != nil {
-				d.Errors = append(d.Errors, report.Error{Code: "invalid_flags", Message: err.Error()})
+			if len(args) > 0 {
+				d.Errors = append(d.Errors, report.Error{Code: "invalid_flags", Message: "unexpected argument " + args[0]})
 				exit = report.ExitUsage
 			} else {
 				exit = diagnose(ctx, deps, *repo, *prov, *live, &d)
 			}
 			d.ExitCode, d.OK = exit, exit == report.ExitClear
-			var md func() string
-			if format != shared.FormatJSON {
-				md = func() string { return markdown(d) }
-			}
-			if err := shared.Print(deps.Stdout, format, d, md); err != nil {
+			if err := shared.Print(deps.Stdout, *asJSON, d, func() string { return human(d, deps.Style()) }); err != nil {
 				return err
 			}
 			return shared.Exit(exit)
@@ -187,13 +179,20 @@ func probe(ctx context.Context, deps shared.Deps, spec engine.ProviderSpec, add 
 	return report.ExitClear
 }
 
-func markdown(d report.Doctor) string {
+func human(d report.Doctor, st report.Style) string {
 	var b strings.Builder
 	for _, c := range d.Checks {
-		fmt.Fprintf(&b, "%-4s  %-18s %s\n", c.Status, c.Name, c.Detail)
+		mark := st.Green("✓")
+		switch c.Status {
+		case warn:
+			mark = st.Yellow("○")
+		case bad:
+			mark = st.Red("✗")
+		}
+		fmt.Fprintf(&b, "%s %-17s %s\n", mark, c.Name, st.Dim(c.Detail))
 	}
 	for _, e := range d.Errors {
-		fmt.Fprintf(&b, "fail  %-18s %s\n", e.Code, e.Message)
+		fmt.Fprintf(&b, "%s %s\n", st.Red("✗"), e.Message)
 	}
 	return b.String()
 }

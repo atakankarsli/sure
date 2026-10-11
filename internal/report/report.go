@@ -61,6 +61,7 @@ type Run struct {
 	Status          string             `json:"status"`
 	Gate            string             `json:"gate"`
 	ExitCode        int                `json:"exit_code"`
+	Confidence      *Confidence        `json:"confidence"`
 	Snapshot        *Snapshot          `json:"snapshot"`
 	Trust           *Trust             `json:"trust"`
 	Provider        *Provider          `json:"provider"`
@@ -74,9 +75,22 @@ type Run struct {
 	Timing          Timing             `json:"timing"`
 }
 
+// Confidence is how sure the decision model is that every selected check
+// holds: the lowest P(supported) among them. A selected check the model never
+// decided counts as 0.
+type Confidence struct {
+	Percent     int     `json:"percent"`
+	Probability float64 `json:"probability"`
+	Basis       string  `json:"basis"`
+	Undecided   int     `json:"undecided"`
+}
+
+const ConfidenceBasis = "lowest P(supported) across selected checks; undecided checks count as 0"
+
 type Snapshot struct {
 	Kind                string   `json:"kind"`
 	Scope               string   `json:"scope"`
+	Selection           string   `json:"selection"`
 	BaseRef             *string  `json:"base_ref"`
 	BaseCommit          *string  `json:"base_commit"`
 	HeadCommit          *string  `json:"head_commit"`
@@ -91,6 +105,7 @@ type Trust struct {
 	ContractsCommit *string `json:"contracts_commit"`
 	ContractDigest  string  `json:"contract_digest"`
 	PolicyVersion   string  `json:"policy_version"`
+	MinProbability  float64 `json:"min_probability"`
 }
 
 type Provider struct {
@@ -138,6 +153,7 @@ type ContractEvidence struct {
 	RequestBytes    int                `json:"request_bytes"`
 	EstimatedTokens int                `json:"estimated_tokens"`
 	Decision        string             `json:"decision"`
+	Confidence      *float64           `json:"confidence"`
 }
 
 type Probabilities struct {
@@ -157,6 +173,7 @@ type Check struct {
 	Message           string         `json:"message"`
 	MessageOrigin     string         `json:"message_origin"`
 	AnalysisLevel     string         `json:"analysis_level"`
+	Confidence        *float64       `json:"confidence"`
 	Probabilities     *Probabilities `json:"probabilities"`
 	ProbabilitySource *string        `json:"probability_source"`
 	ModelConfidence   *float64       `json:"model_confidence"`
@@ -279,3 +296,7 @@ type Init struct {
 }
 
 func Ptr[T any](v T) *T { return &v }
+
+// Percent floors so a value just under a threshold never displays as meeting
+// it.
+func Percent(p float64) int { return int(p*100 + 1e-9) }

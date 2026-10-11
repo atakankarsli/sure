@@ -32,7 +32,7 @@ func Run(args []string, deps shared.Deps) int {
 	// Help goes to stdout when asked for; flag errors and their usage go to
 	// stderr so stdout never mixes text into a JSON document.
 	out := deps.Stderr
-	if wantsHelp(args) || len(args) == 0 {
+	if wantsHelp(args) {
 		out = deps.Stdout
 	}
 	setOutput(root, out)
@@ -52,9 +52,6 @@ func Run(args []string, deps shared.Deps) int {
 	case errors.As(err, &code):
 		return int(code)
 	case errors.Is(err, flag.ErrHelp):
-		if len(args) == 0 {
-			return report.ExitClear
-		}
 		return report.ExitUsage
 	default:
 		fmt.Fprintln(deps.Stderr, "Error:", err)

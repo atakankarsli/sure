@@ -1,5 +1,5 @@
 // Package shared holds what every Sure command uses: injected dependencies,
-// output rendering, exit signalling and the default provider factory.
+// output, exit signalling and the default provider factory.
 package shared
 
 import (
@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/atakankarsli/sure/internal/engine"
+	"github.com/atakankarsli/sure/internal/report"
 )
 
 // Deps is constructed once per invocation; tests replace any part of it.
@@ -25,6 +26,8 @@ type Deps struct {
 	NewRunID func() string
 	Factory  engine.Factory
 	Version  string
+	// Color enables ANSI styling of human output.
+	Color bool
 }
 
 func DefaultDeps(version string) Deps {
@@ -36,11 +39,26 @@ func DefaultDeps(version string) Deps {
 		NewRunID: NewRunID,
 		Factory:  ProviderFactory{Getenv: os.Getenv},
 		Version:  version,
+		Color:    colorTerminal(os.Stdout),
 	}
 }
 
-func (d Deps) Engine() engine.Deps {
-	return engine.Deps{Getenv: d.Getenv, Now: d.Now, NewRunID: d.NewRunID, Factory: d.Factory, Stderr: d.Stderr}
+func colorTerminal(f *os.File) bool {
+	if os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
+		return false
+	}
+	info, err := f.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+func (d Deps) Style() report.Style { return report.Style{Color: d.Color} }
+
+func (d Deps) Engine(verbose bool) engine.Deps {
+	e := engine.Deps{Getenv: d.Getenv, Now: d.Now, NewRunID: d.NewRunID, Factory: d.Factory, Stderr: d.Stderr}
+	if verbose {
+		e.Progress = d.Stderr
+	}
+	return e
 }
 
 func NewRunID() string {
@@ -63,46 +81,16 @@ func Exit(code int) error {
 	return ExitCode(code)
 }
 
-const (
-	FormatJSON     = "json"
-	FormatMarkdown = "markdown"
-	FormatTable    = "table"
-)
-
-// BindOutput registers --output. SURE_DEFAULT_OUTPUT sets the default; the
-// flag always wins.
-func BindOutput(fs *flag.FlagSet, getenv func(string) string) *string {
-	def := FormatMarkdown
-	switch v := strings.ToLower(strings.TrimSpace(getenv("SURE_DEFAULT_OUTPUT"))); v {
-	case FormatJSON, FormatTable, FormatMarkdown:
-		def = v
-	case "md":
-		def = FormatMarkdown
-	}
-	return fs.String("output", def, "Output format: markdown, json or table")
-}
-
-func NormalizeFormat(f string) (string, error) {
-	switch v := strings.ToLower(strings.TrimSpace(f)); v {
-	case FormatJSON, FormatMarkdown, FormatTable:
-		return v, nil
-	case "md":
-		return FormatMarkdown, nil
-	default:
-		return "", fmt.Errorf("--output must be markdown, json or table, not %q", f)
-	}
-}
-
-// Print writes exactly one document to stdout: indented JSON, or the given
-// renderer's text.
-func Print(w io.Writer, format string, data any, render func() string) error {
-	if format == FormatJSON || render == nil {
+// Print writes exactly one document to stdout: indented JSON, or the human
+// rendering.
+func Print(w io.Writer, asJSON bool, data any, human func() string) error {
+	if asJSON || human == nil {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		enc.SetEscapeHTML(false)
 		return enc.Encode(data)
 	}
-	s := render()
+	s := human()
 	if !strings.HasSuffix(s, "\n") {
 		s += "\n"
 	}
@@ -110,24 +98,25 @@ func Print(w io.Writer, format string, data any, render func() string) error {
 	return err
 }
 
-// StringList is a repeatable flag that also splits on commas.
-type StringList []string
-
-func (s *StringList) String() string { return strings.Join(*s, ",") }
-
-func (s *StringList) Set(v string) error {
-	for _, part := range strings.Split(v, ",") {
-		if p := strings.TrimSpace(part); p != "" {
-			*s = append(*s, p)
+// ParseInterspersed lets flags follow positional arguments, so
+// `sure checkout --json` works like `sure --json checkout`. Everything after
+// "--" is positional.
+func ParseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
+	var pos []string
+	for len(args) > 0 {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
 		}
+		args = fs.Args()
+		if len(args) == 0 {
+			break
+		}
+		if args[0] == "--" {
+			pos = append(pos, args[1:]...)
+			break
+		}
+		pos = append(pos, args[0])
+		args = args[1:]
 	}
-	return nil
-}
-
-// RejectArgs fails a command that takes no positional arguments.
-func RejectArgs(args []string) error {
-	if len(args) > 0 {
-		return fmt.Errorf("unexpected argument %q", args[0])
-	}
-	return nil
+	return pos, nil
 }

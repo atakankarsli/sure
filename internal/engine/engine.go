@@ -22,6 +22,9 @@ import (
 )
 
 const (
+	// ModeAuto checks the contracts touched by changes against the base, or
+	// every contract when nothing changed.
+	ModeAuto     = "auto"
 	ModeAll      = "all"
 	ModeChanged  = "changed"
 	ModeContract = "contract"
@@ -62,7 +65,10 @@ type Deps struct {
 	Now      func() time.Time
 	NewRunID func() string
 	Factory  Factory
+	// Stderr receives warnings; Progress, when set, receives one line per
+	// decided contract.
 	Stderr   io.Writer
+	Progress io.Writer
 }
 
 // failure is an error that stops a run before evaluation, with its exit code.
@@ -80,10 +86,13 @@ func fail(code string, exit int, format string, args ...any) *failure {
 
 // prepared is everything known before the first provider call.
 type prepared struct {
-	opts         Options
-	repo         *gitview.Repo
-	head         string
-	baseCommit   string
+	opts       Options
+	repo       *gitview.Repo
+	head       string
+	baseCommit string
+	baseName   string
+	// autoAll is set when auto mode found no changes and fell back to all.
+	autoAll      bool
 	trustCommit  string
 	trustRef     string
 	trusted      *contracts.Set
@@ -131,14 +140,19 @@ func prepare(ctx context.Context, opts Options, deps Deps) (*prepared, error) {
 		return nil, contextFailure(ctx, err)
 	}
 
-	if opts.Mode == ModeChanged {
-		if !repo.IsGit || p.head == "" {
-			return nil, fail("changed_requires_git", report.ExitUsage, "--changed needs a Git repository with at least one commit")
-		}
+	if opts.Mode == "" {
+		opts.Mode = ModeAuto
+		p.opts.Mode = ModeAuto
+	}
+	if opts.Mode == ModeChanged && (!repo.IsGit || p.head == "") {
+		return nil, fail("changed_requires_git", report.ExitUsage, "--changed needs a Git repository with at least one commit")
+	}
+	if (opts.Mode == ModeChanged || opts.Mode == ModeAuto) && repo.IsGit && p.head != "" {
 		ref := opts.BaseRef
 		if ref == "" {
-			ref = "HEAD"
+			ref = repo.DefaultBase(ctx)
 		}
+		p.baseName = ref
 		base, err := repo.ResolveCommit(ctx, ref)
 		if err != nil {
 			return nil, fail("invalid_base", report.ExitUsage, "--base: %v", err)
@@ -189,6 +203,11 @@ func (p *prepared) loadTrust(ctx context.Context) error {
 	wt, wtErr := contracts.Load(ctx, p.repo.Worktree())
 	if wtErr != nil && !errors.Is(wtErr, contracts.ErrNotInitialized) {
 		return contextFailure(ctx, wtErr)
+	}
+	if errors.Is(wtErr, contracts.ErrNotInitialized) && p.opts.ContractsRef == "" {
+		if _, err := p.repo.Worktree().Read(ctx, ".sure", 0); errors.Is(err, gitview.ErrNotFound) {
+			return fail("not_initialized", report.ExitUsage, "no .sure/ in %s", p.repo.Root)
+		}
 	}
 	if p.opts.Draft {
 		if wtErr != nil {
@@ -286,57 +305,96 @@ func (p *prepared) selectContracts(ctx context.Context) error {
 			p.selected[c.ID] = "all"
 		}
 	case ModeContract:
-		for _, id := range p.opts.Contracts {
-			if _, ok := set.Contract(id); !ok {
-				return fail("unknown_contract", report.ExitUsage, "contract %q is not in the trusted contracts", id)
-			}
-			p.selected[id] = "contract"
-		}
-	case ModeChanged:
-		changes, err := p.repo.Changes(ctx, p.baseCommit)
-		if err != nil {
-			return contextFailure(ctx, err)
-		}
-		p.changed = changes
-		seen := map[string]bool{}
-		for _, c := range changes {
-			for _, x := range c.Paths() {
-				if !seen[x] {
-					seen[x] = true
-					p.changedPaths = append(p.changedPaths, x)
+		for _, arg := range p.opts.Contracts {
+			id, _, _ := strings.Cut(arg, "/")
+			matched := false
+			for _, c := range set.Contracts {
+				if c.ID == id || strings.HasPrefix(c.ID, id+".") {
+					p.selected[c.ID] = "contract"
+					matched = true
 				}
 			}
+			if !matched {
+				ids := make([]string, 0, len(set.Contracts))
+				for _, c := range set.Contracts {
+					ids = append(ids, c.ID)
+				}
+				return fail("unknown_contract", report.ExitUsage, "no trusted contract matches %q; known: %s", arg, strings.Join(ids, ", "))
+			}
 		}
-		sort.Strings(p.changedPaths)
-		if len(p.changedPaths) == 0 {
-			p.noChanges = true
+	case ModeAuto:
+		if p.baseCommit == "" {
+			p.selectAll("all")
+			p.autoAll = true
 			return nil
 		}
-		for _, x := range p.changedPaths {
-			if invalidatesPlan(set.Config, x) {
-				for _, c := range set.Contracts {
-					if _, ok := p.selected[c.ID]; !ok {
-						p.selected[c.ID] = "plan_invalidated:" + x
-					}
-				}
-			}
+		if err := p.selectChanged(ctx); err != nil {
+			return err
 		}
-		for _, x := range p.changedPaths {
-			covered := false
-			for _, c := range set.Contracts {
-				if c.Covers(x) {
-					covered = true
-					if _, ok := p.selected[c.ID]; !ok {
-						p.selected[c.ID] = "changed:" + x
-					}
-				}
-			}
-			if !covered && set.Config.Allowed(x) {
-				p.unmapped = append(p.unmapped, x)
-			}
+		if p.noChanges {
+			p.noChanges = false
+			p.autoAll = true
+			p.selectAll("all")
 		}
+	case ModeChanged:
+		return p.selectChanged(ctx)
 	default:
 		return fail("invalid_mode", report.ExitUsage, "choose one of --all, --changed or --contract")
+	}
+	return nil
+}
+
+func (p *prepared) selectAll(by string) {
+	for _, c := range p.trusted.Contracts {
+		p.selected[c.ID] = by
+	}
+}
+
+// selectChanged selects every contract whose scope or context covers a path
+// that differs from the base, and records changed source no contract covers.
+func (p *prepared) selectChanged(ctx context.Context) error {
+	set := p.trusted
+	changes, err := p.repo.Changes(ctx, p.baseCommit)
+	if err != nil {
+		return contextFailure(ctx, err)
+	}
+	p.changed = changes
+	seen := map[string]bool{}
+	for _, c := range changes {
+		for _, x := range c.Paths() {
+			if !seen[x] {
+				seen[x] = true
+				p.changedPaths = append(p.changedPaths, x)
+			}
+		}
+	}
+	sort.Strings(p.changedPaths)
+	if len(p.changedPaths) == 0 {
+		p.noChanges = true
+		return nil
+	}
+	for _, x := range p.changedPaths {
+		if invalidatesPlan(set.Config, x) {
+			for _, c := range set.Contracts {
+				if _, ok := p.selected[c.ID]; !ok {
+					p.selected[c.ID] = "plan_invalidated:" + x
+				}
+			}
+		}
+	}
+	for _, x := range p.changedPaths {
+		covered := false
+		for _, c := range set.Contracts {
+			if c.Covers(x) {
+				covered = true
+				if _, ok := p.selected[c.ID]; !ok {
+					p.selected[c.ID] = "changed:" + x
+				}
+			}
+		}
+		if !covered && set.Config.Allowed(x) {
+			p.unmapped = append(p.unmapped, x)
+		}
 	}
 	return nil
 }

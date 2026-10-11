@@ -83,35 +83,27 @@ const gitignore = "cache/\nrecordings/\n"
 func Command(deps shared.Deps) *ffcli.Command {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	repo := fs.String("repo", ".", "Repository to initialize")
-	output := shared.BindOutput(fs, deps.Getenv)
+	asJSON := fs.Bool("json", false, "Print one JSON document")
 	return &ffcli.Command{
 		Name:       "init",
-		ShortUsage: "sure init --repo <dir> [--output json]",
-		ShortHelp:  "Scaffold .sure/ without touching existing files.",
+		ShortUsage: "sure init [--json]",
+		ShortHelp:  "Create .sure/ with a config and a contract template.",
 		LongHelp: `Creates .sure/config.yaml, an empty .sure/contracts/ directory and a contract
 template. Existing files are never overwritten. Does not call a provider and
 does not write any requirement.`,
 		FlagSet:   fs,
 		UsageFunc: shared.DefaultUsageFunc,
 		Exec: func(ctx context.Context, args []string) error {
-			format, err := shared.NormalizeFormat(*output)
-			if err != nil {
-				return err
-			}
 			res := report.Init{SchemaVersion: report.InitSchema, Created: []string{}, Existing: []string{}, Errors: []report.Error{}}
-			if err := shared.RejectArgs(args); err != nil {
-				res.Errors = append(res.Errors, report.Error{Code: "invalid_flags", Message: err.Error()})
+			if len(args) > 0 {
+				res.Errors = append(res.Errors, report.Error{Code: "invalid_flags", Message: "unexpected argument " + args[0]})
 			} else if err := scaffold(ctx, *repo, &res); err != nil {
 				res.Errors = append(res.Errors, report.Error{Code: "init_failed", Message: err.Error()})
 			}
 			if len(res.Errors) > 0 {
 				res.ExitCode = report.ExitUsage
 			}
-			var md func() string
-			if format != shared.FormatJSON {
-				md = func() string { return markdown(res) }
-			}
-			if err := shared.Print(deps.Stdout, format, res, md); err != nil {
+			if err := shared.Print(deps.Stdout, *asJSON, res, func() string { return human(res, deps.Style()) }); err != nil {
 				return err
 			}
 			return shared.Exit(res.ExitCode)
@@ -169,19 +161,19 @@ func scaffold(ctx context.Context, dir string, res *report.Init) error {
 	return nil
 }
 
-func markdown(r report.Init) string {
+func human(r report.Init, st report.Style) string {
 	var b strings.Builder
 	for _, e := range r.Errors {
-		fmt.Fprintf(&b, "Error: %s\n", e.Message)
+		fmt.Fprintf(&b, "%s %s\n", st.Red("✗"), e.Message)
 	}
 	for _, c := range r.Created {
-		fmt.Fprintf(&b, "created  %s\n", c)
+		fmt.Fprintf(&b, "%s %s\n", st.Green("+"), c)
 	}
 	for _, c := range r.Existing {
-		fmt.Fprintf(&b, "kept     %s (already exists)\n", c)
+		fmt.Fprintf(&b, "%s %s %s\n", st.Dim("="), c, st.Dim("(kept)"))
 	}
 	if len(r.Created) > 0 {
-		b.WriteString("\nNext: write contracts in .sure/contracts/ (see .sure/contract-template.md), run `sure contracts validate`, then commit .sure/ so checks have a trusted base.\n")
+		b.WriteString(st.Dim("\nNext: write a contract in .sure/contracts/ (copy .sure/contract-template.md), run `sure validate`, commit .sure/, then run `sure`.") + "\n")
 	}
 	return b.String()
 }
