@@ -1,10 +1,31 @@
-# Sure
+<p align="center">
+  <img src="docs/assets/sure-mark.svg" width="120" alt="">
+</p>
 
-How sure are we that the code still does what the product needs?
+<h1 align="center">sure</h1>
+
+<p align="center">
+  <a href="#limits"><img src="https://img.shields.io/badge/status-experimental-f97316?style=flat-square" alt="status: experimental"></a>
+  <a href="go.mod"><img src="https://img.shields.io/badge/go-1.26-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go 1.26"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-7cb342?style=flat-square" alt="MIT"></a>
+  <a href="https://github.com/atakankarsli/sure/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/atakankarsli/sure/ci.yml?branch=main&style=flat-square&label=ci" alt="CI"></a>
+  <a href="#decision-models"><img src="https://img.shields.io/badge/decision%20model-Jev-000000?style=flat-square" alt="decision model: Jev"></a>
+  <a href="https://github.com/atakankarsli/sure/issues/new"><img src="https://img.shields.io/badge/found%20a%20miss%3F-open%20an%20issue-7c3aed?style=flat-square" alt="found a miss? open an issue"></a>
+</p>
+
+<p align="center"><strong>How sure are we that the code still does what the product needs?</strong></p>
 
 Sure checks a code change against your product's core flows, written in plain English, and prints how sure a decision model is that each flow still holds, with the file and lines when it does not. It reads source only. Nothing is built, run or tested.
 
 **Status: experimental.** It finds real bugs and it misses some. Read [Limits](#limits) before you trust a green run.
+
+```sh
+go install github.com/atakankarsli/sure@latest
+export TYPESAFE_API_KEY=...
+cd any-git-repo && sure --expect "Deleting a user keeps their invoices"
+```
+
+That works in any repository, with no setup: Sure reads the files your branch changed plus what they import, and answers in under a second.
 
 ```
 $ sure
