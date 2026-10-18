@@ -1,10 +1,12 @@
 # Jev wire format
 
-Checked 2026-10-11. Re-check before Milestone 2.
+Checked 2026-10-11; models and long context re-checked 2026-10-18.
 
 ## TypeSafe direct (from docs.typesafe.ai/api)
 
 `POST https://api.typesafe.ai/v1/systemone`, headers `Authorization: Bearer <key>` and `Content-Type: application/json`.
+
+Models (docs.typesafe.ai/models, 2026-10-18): `jev-1.13.0` and `jev-1.14.0` (released 2026-10-14), both $0.042 per million input tokens, 64k tokens per request and 32k per question. Aliases: `jev-latest` → 1.13.0, `jev-preview` → 1.14.0. Long context is not a model: the header `TypeSafe-Danger-Zone-Long-Context: true` raises both limits to 262k tokens on either model at the same price, documented as slower and less accurate. Verified live with a synthetic probe and a 159k-token request (`jev-long-context.md`). Whether the gateway forwards the header is unknown; Sure sends it on the direct transport only.
 
 Request:
 
@@ -42,35 +44,42 @@ Response:
 
 Limits (from docs.typesafe.ai/models): 64k tokens per request; 32k for state plus the longest question. Price: $0.042 per million input tokens; output is free. Text/JSON only.
 
-## Vercel AI Gateway (probed directly)
+## Vercel AI Gateway — the route Sure uses
 
-Model catalog (`GET https://ai-gateway.vercel.sh/v1/models`, no auth):
+Source: the AI SDK's gateway provider (`@ai-sdk/gateway` 4.0.110, used by `ai` 7.0.137 in Vercel's eve framework) and the decision model spec in `@ai-sdk/provider` 4.0.26. Request validation was confirmed by live probes; responses are blocked by billing until the Vercel team has a card.
 
-- ID `typesafe-ai/jev`, type `evaluation`, context window 32000, input $0.042/M, output $0, `supported_specifications: ["v4"]`.
-- Two upstreams (`/v1/models/typesafe-ai/jev/endpoints`): `typesafe-ai` with ZDR, and `digitalocean` **without** ZDR.
+`POST https://ai-gateway.vercel.sh/v4/ai/decision-model` with headers `Authorization: Bearer <AI_GATEWAY_API_KEY>`, `ai-gateway-protocol-version: 0.0.1`, `ai-gateway-auth-method: api-key`, `ai-decision-model-specification-version: 4`, `ai-model-id: typesafe-ai/jev`.
 
-Probes with a synthetic two-question body (no source code):
+```json
+{
+  "stateParts": [{ "type": "json", "value": { "...": "..." } }],
+  "questions": { "<id>": { "type": "choice", "instructions": "<string|object|array>", "criteria": { "<option>": "<description or null>" } } },
+  "providerOptions": { "gateway": { "only": ["typesafe-ai"] } }
+}
+```
 
-| Request | Result |
-|---|---|
-| `POST /v1/systemone` | `404 not_found_error` |
-| `POST /v1/evaluate` with a `noul` question | `400 invalid_request_error`: `questions.q2.type: Invalid discriminator value. Expected 'boolean' \| 'choice' \| 'score'` |
-| `POST /v1/evaluate` with `boolean` | `403 customer_verification_required`: the Vercel team needs a credit card on file |
+Response (AI SDK `DecisionModelV4Result`):
 
-What this shows:
+```json
+{
+  "answers": { "<id>": { "type": "choice", "choice": "<option>", "probabilities": { "<option>": 0.0 } } },
+  "model": "<optional>",
+  "rounding": { "probabilityDecimals": 3 },
+  "usage": { "inputTokens": 0, "outputTokens": 0 },
+  "warnings": [],
+  "providerMetadata": {}
+}
+```
 
-- The gateway's Jev route is `/v1/evaluate`, with `Authorization: Bearer <AI_GATEWAY_API_KEY>`.
-- The boolean question type is `boolean`, not `noul`.
-- The body is validated before auth or billing. A 400 does not prove the key is valid.
-- The key passed authentication and stopped at the billing check.
+- An answer may be `{ "type": "refusal" }`; Sure reports that check as unknown (`model_refused`).
+- `probabilities` is optional in the spec, but Sure requires it and treats its absence as malformed.
+- There is no `confidence` field; TypeSafe's confidence, if any, sits in `providerMetadata`.
+- The model ID travels in a header, not the body.
+- The gateway also accepts `providerOptions.gateway.models` with conditional fallbacks (`confidenceBelow`, `probabilityBetween`). Sure does not use them.
 
-## Unknown until a live call succeeds
+Earlier probes (2026-10-11) of the older `/v1/evaluate` route: it validates `model`, `state`, `questions` with types `boolean | choice | score`, and validates the body before auth and billing. Sure no longer uses it.
 
-- The gateway's response shape, especially the field name for a `boolean` answer, and whether `choice` answers match TypeSafe's.
-- Whether a version can be pinned through the gateway (for example `typesafe-ai/jev-1.13.0`) and what `model` comes back. Until then, record `returned_model` and flag any change.
-- How to pin the upstream to `typesafe-ai` on `/v1/evaluate`, for example through the gateway's provider options.
-- Gateway error body shapes for `401`, `422`, `429` and `529`, plus rate-limit and `Retry-After` headers.
-- Whether cost headers (`X-Cost-USD` or similar) come back.
+Catalog: `typesafe-ai/jev`, type `evaluation`, context 32000, $0.042 per million input tokens, output free. Upstreams: `typesafe-ai` (zero data retention) and `digitalocean` (none).
 
 ## Unverified third-party claims
 

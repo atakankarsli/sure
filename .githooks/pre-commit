@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+export PATH="$(go env GOPATH)/bin:$PATH"
+
+echo "Checking formatting..."
+make format-check
+
+echo "Running lint..."
+make lint
+
+echo "Running tests..."
+go test -short ./...

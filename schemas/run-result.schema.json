@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:sure:run-result:v1",
-  "title": "Sure run result \u2014 proposed v1",
-  "description": "Additional semantic validation must check probability sums, ordered line ranges, coverage equations and exit precedence.",
+  "title": "Sure run result v1",
+  "description": "Output of `sure --json`. Versioned independently of the binary. `confidence` is the lowest P(supported) across selected checks (undecided checks count as 0); it is null when a provider failed or nothing was checked. Exit codes: operational failures outrank violations, which outrank incompleteness.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -11,21 +11,22 @@
     "status",
     "gate",
     "exit_code",
+    "confidence",
     "snapshot",
     "trust",
     "provider",
     "summary",
+    "contracts",
     "checks",
     "errors",
     "unmapped_changes",
-    "contract_changes"
+    "contract_changes",
+    "next_actions",
+    "timing"
   ],
   "properties": {
     "schema_version": {
       "const": "sure.run/v1"
-    },
-    "example_only": {
-      "type": "boolean"
     },
     "run_id": {
       "type": "string",
@@ -62,142 +63,274 @@
         130
       ]
     },
-    "snapshot": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "kind",
-        "base_ref",
-        "source_digest",
-        "scope",
-        "application_executed"
-      ],
-      "properties": {
-        "kind": {
-          "enum": [
-            "worktree",
-            "commit",
-            "index"
-          ]
+    "confidence": {
+      "oneOf": [
+        {
+          "type": "null"
         },
-        "base_ref": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "source_digest": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
-        },
-        "scope": {
-          "enum": [
-            "all",
-            "changed",
-            "contract"
-          ]
-        },
-        "application_executed": {
-          "const": false
-        }
-      }
-    },
-    "trust": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "mode",
-        "contracts_ref",
-        "contract_digest",
-        "policy_version"
-      ],
-      "properties": {
-        "mode": {
-          "enum": [
-            "protected",
-            "draft"
-          ]
-        },
-        "contracts_ref": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "contract_digest": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
-        },
-        "policy_version": {
-          "type": "string"
-        }
-      }
-    },
-    "provider": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "name",
-        "requested_model",
-        "returned_model",
-        "mode",
-        "prompt_version",
-        "usage"
-      ],
-      "properties": {
-        "name": {
-          "type": "string"
-        },
-        "requested_model": {
-          "type": "string"
-        },
-        "returned_model": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "mode": {
-          "enum": [
-            "live",
-            "cache",
-            "replay",
-            "mixed",
-            "fake"
-          ]
-        },
-        "prompt_version": {
-          "type": "string"
-        },
-        "usage": {
+        {
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "requests",
-            "input_tokens",
-            "output_tokens",
-            "cache_hits"
+            "percent",
+            "probability",
+            "basis",
+            "undecided"
           ],
           "properties": {
-            "requests": {
+            "percent": {
               "type": "integer",
-              "minimum": 0
+              "minimum": 0,
+              "maximum": 100
             },
-            "input_tokens": {
-              "type": "integer",
-              "minimum": 0
+            "probability": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
             },
-            "output_tokens": {
-              "type": "integer",
-              "minimum": 0
+            "basis": {
+              "type": "string"
             },
-            "cache_hits": {
+            "undecided": {
               "type": "integer",
               "minimum": 0
             }
           }
         }
-      }
+      ]
+    },
+    "snapshot": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "scope",
+            "selection",
+            "base_ref",
+            "base_commit",
+            "head_commit",
+            "source_digest",
+            "changed_paths",
+            "application_executed"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "worktree"
+              ]
+            },
+            "scope": {
+              "enum": [
+                "all",
+                "changed",
+                "contract"
+              ]
+            },
+            "base_ref": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "base_commit": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+            },
+            "head_commit": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+            },
+            "source_digest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "changed_paths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "application_executed": {
+              "const": false
+            },
+            "selection": {
+              "enum": [
+                "changed",
+                "all",
+                "all_no_changes",
+                "all_no_base",
+                "contract"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "trust": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "contracts_ref",
+            "contracts_commit",
+            "contract_digest",
+            "policy_version",
+            "min_probability"
+          ],
+          "properties": {
+            "mode": {
+              "enum": [
+                "protected",
+                "draft",
+                "adhoc"
+              ]
+            },
+            "contracts_ref": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "contracts_commit": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+            },
+            "contract_digest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "policy_version": {
+              "type": "string"
+            },
+            "min_probability": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        }
+      ]
+    },
+    "provider": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "transport",
+            "endpoint",
+            "requested_model",
+            "returned_models",
+            "mode",
+            "prompt_version",
+            "probability_source",
+            "usage"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "transport": {
+              "type": "string"
+            },
+            "endpoint": {
+              "type": "string"
+            },
+            "requested_model": {
+              "type": "string"
+            },
+            "returned_models": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "mode": {
+              "enum": [
+                "none",
+                "live",
+                "cache",
+                "replay",
+                "mixed",
+                "fake"
+              ]
+            },
+            "prompt_version": {
+              "type": "string"
+            },
+            "probability_source": {
+              "enum": [
+                "model_distribution",
+                "self_reported"
+              ]
+            },
+            "usage": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "requests",
+                "live_requests",
+                "cache_hits",
+                "input_tokens",
+                "output_tokens",
+                "estimated_input_tokens"
+              ],
+              "properties": {
+                "requests": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "live_requests": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "cache_hits": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "input_tokens": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "output_tokens": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "estimated_input_tokens": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            "long_context": {
+              "type": "boolean"
+            }
+          }
+        }
+      ]
     },
     "summary": {
       "type": "object",
@@ -247,6 +380,12 @@
         }
       }
     },
+    "contracts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/contract"
+      }
+    },
     "checks": {
       "type": "array",
       "items": {
@@ -268,11 +407,190 @@
     "contract_changes": {
       "type": "array",
       "items": {
-        "type": "string"
+        "$ref": "#/$defs/contract_change"
+      }
+    },
+    "next_actions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/action"
+      }
+    },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "collection_ms",
+        "model_ms",
+        "total_ms"
+      ],
+      "properties": {
+        "collection_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "model_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     }
   },
   "$defs": {
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "path",
+        "role",
+        "sha256",
+        "bytes",
+        "lines"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^F[0-9]{3,}$"
+        },
+        "path": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "scope",
+            "context"
+          ]
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lines": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "gap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "reason"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "not_found",
+            "excluded",
+            "binary",
+            "too_large",
+            "symlink",
+            "not_a_file",
+            "unreadable"
+          ]
+        }
+      }
+    },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "adhoc",
+        "path",
+        "evidence",
+        "selected",
+        "files",
+        "missing",
+        "skipped",
+        "state_bytes",
+        "request_bytes",
+        "estimated_tokens",
+        "decision",
+        "confidence"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "adhoc": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        },
+        "evidence": {
+          "enum": [
+            "code",
+            "image"
+          ]
+        },
+        "selected": {
+          "type": "boolean"
+        },
+        "selected_by": {
+          "type": "string"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/file"
+          }
+        },
+        "missing": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/gap"
+          }
+        },
+        "skipped": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/gap"
+          }
+        },
+        "state_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "request_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "estimated_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "decision": {
+          "type": "string"
+        },
+        "confidence": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          ]
+        }
+      }
+    },
     "location": {
       "type": "object",
       "additionalProperties": false,
@@ -284,8 +602,7 @@
       ],
       "properties": {
         "path": {
-          "type": "string",
-          "minLength": 1
+          "type": "string"
         },
         "start_line": {
           "type": "integer",
@@ -317,8 +634,10 @@
           "enum": [
             "inspect_source",
             "supply_context",
+            "narrow_scope",
             "provide_visual_evidence",
             "review_contract_change",
+            "map_changed_source",
             "recheck"
           ]
         },
@@ -350,6 +669,8 @@
       "additionalProperties": false,
       "required": [
         "id",
+        "contract",
+        "title",
         "verdict",
         "severity",
         "requirement",
@@ -357,13 +678,24 @@
         "message",
         "message_origin",
         "analysis_level",
+        "confidence",
+        "probabilities",
+        "probability_source",
+        "model_confidence",
+        "regression",
         "locations",
         "next_actions"
       ],
       "properties": {
         "id": {
           "type": "string",
-          "minLength": 1
+          "pattern": "^[a-z][a-z0-9_.-]*/[A-Z][A-Z0-9]*-[0-9]+$"
+        },
+        "contract": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
         },
         "verdict": {
           "enum": [
@@ -401,39 +733,77 @@
             "semantic"
           ]
         },
-        "probabilities": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "supported",
-            "violated",
-            "unknown"
-          ],
-          "properties": {
-            "supported": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1
+        "confidence": {
+          "oneOf": [
+            {
+              "type": "null"
             },
-            "violated": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1
-            },
-            "unknown": {
+            {
               "type": "number",
               "minimum": 0,
               "maximum": 1
             }
-          }
+          ]
+        },
+        "probabilities": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "supported",
+                "violated",
+                "unknown"
+              ],
+              "properties": {
+                "supported": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "violated": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "unknown": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          ]
+        },
+        "probability_source": {
+          "enum": [
+            null,
+            "model_distribution",
+            "self_reported"
+          ]
         },
         "model_confidence": {
-          "type": [
-            "number",
-            "null"
-          ],
-          "minimum": 0,
-          "maximum": 1
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          ]
+        },
+        "regression": {
+          "enum": [
+            "introduced",
+            "preexisting",
+            "unknown",
+            "not_assessed"
+          ]
         },
         "locations": {
           "type": "array",
@@ -463,7 +833,45 @@
         "message": {
           "type": "string"
         },
+        "contract": {
+          "type": "string"
+        },
         "check_id": {
+          "type": "string"
+        }
+      }
+    },
+    "contract_change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "detail"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "config_changed",
+            "config_invalid",
+            "contract_added",
+            "contract_removed",
+            "contract_invalid",
+            "contract_changed",
+            "check_added",
+            "check_removed",
+            "check_changed"
+          ]
+        },
+        "contract": {
+          "type": "string"
+        },
+        "check": {
+          "type": "string"
+        },
+        "field": {
+          "type": "string"
+        },
+        "detail": {
           "type": "string"
         }
       }

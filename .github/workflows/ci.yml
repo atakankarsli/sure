@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Format
+        run: make format-check
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test (offline, race)
+        run: make test-race
+
+      - name: CGO-free cross-build
+        run: make build-all
+
+      - name: Version check
+        run: ./dist/sure_linux_amd64 --version
