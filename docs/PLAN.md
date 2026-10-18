@@ -29,9 +29,19 @@ Jev is about six times faster. Its one real weakness so far is confident: it cle
 
 The eval found and fixed one real bug: `sure <contract>` used to trust HEAD, so a contract weakened on a feature branch was believed. Trusted contracts now come from the merge base in every mode.
 
+## Measured: long context (2026-10-18, one run each)
+
+`--long-context` sends TypeSafe's `TypeSafe-Danger-Zone-Long-Context` header (262k tokens per request and per question, same price) and raises the evidence floors to 640 KiB / 240k tokens. Details in `docs/research/jev-long-context.md`.
+
+- The scoped `sure-eval` run reproduces the 11 October numbers exactly (13/18, 2 wrongly cleared, 88/95). The header alone moves probabilities by about ±0.05. Reading the whole 9.5 KB app per check: 12/18, 1–2 wrongly cleared, more safe checks cleared, one new confident miss (C016).
+- A Unity game's core assembly (C#, 60 files, 159k tokens, 2.5 s per request): clean code gets the same verdicts as a 23k-token feature scope. With two real bugs planted, the wide evidence cleared one with P(supported) 1.00 and halved the signal on the other; the feature scope kept both unsure. More context dilutes.
+- bytes/3 overestimates C# tokens by about 18%. The default 64 KiB state cap is reached before 32k tokens on C#.
+
 ## Next
 
 - **Jev through the gateway:** works directly with `TYPESAFE_API_KEY` today; the gateway route still needs a card on the Vercel team.
+- **Evidence for C#:** follow `using` directives like TS imports. The default state cap is now 80 KiB (about 27k tokens) so a feature-sized C# scope fits without `--long-context`.
+- **Decision ladder (ADR 0003, proposed):** facts and anti-facts per check, union rule, movement against the base as a `regressed` verdict, Claude as a second opinion for what stays unsure. On the corpus this reaches 18/18 with 0 wrongly cleared in one run (`docs/research/decisive-questions.md`), but the holdout was touched by the probes: write and freeze a fresh holdout first, then implement in this order: contract `facts`/`anti_facts` + union rule → movement on `--assess-base` → second opinion → skill guidance for authoring facts.
 - **Indirection misses:** on the dev split only, try question wording that asks the model to follow each field to its final value on the failure path, and measure CHK-003 again. Consider a second opinion (Claude) for checks Jev clears below 0.97.
 - **Policy:** after the Jev run, decide the threshold per provider from the dev split only.
 - **Evidence:** import following covers TS/JS and Python; add Go and Swift if those repos need ad-hoc checks.

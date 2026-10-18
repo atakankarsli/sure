@@ -5,7 +5,7 @@ Gotcha: The gateway validates the request body before auth and billing. A 400 do
 Gotcha: Until the Vercel team has a credit card on file, every gateway call returns `403 customer_verification_required`, even with a valid key.
 Gotcha: The gateway's `typesafe-ai/jev` has two upstreams, and `digitalocean` has no zero data retention. Pin routing to `typesafe-ai` before sending real source.
 Gotcha: `vercel ai-gateway setup` is unrelated to Sure. It reroutes local coding agents by rewriting `~/.claude/settings.json` and `~/.zshrc`.
-Gotcha: The local ADC clone (`~/work/Tools/aseprite-cli/reference-repos/adc`) is behind upstream. Read it with `git show origin/main:<path>`, and never pull or edit it.
+Gotcha: Read ADC from its GitHub `main`; a local clone of it may be behind upstream. Never modify ADC.
 Gotcha: The Go SDK reads `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` and on-disk profiles by default. Sure builds its client with `option.WithoutEnvironmentDefaults()` and reads only `SURE_ANTHROPIC_API_KEY`.
 Gotcha: `anthropic-sdk-go` is pinned to v1.75.0 (published 2026-09-22) on purpose; the newest release was two days old when picked. Bump deliberately.
 Gotcha: Claude's reported input tokens are about 5x Sure's estimate (system prompt, output schema and JSON framing). The estimate is a Jev-oriented budget guard, not a cost forecast.
@@ -16,3 +16,8 @@ Gotcha: Claude rarely lists every option of a long choice and its totals drift (
 Gotcha: Go's flag package stops at the first positional argument, so `sure checkout --json` lost `--json` until `shared.ParseInterspersed`.
 Gotcha: Vitest resolves `--config` relative to `--root`; sure-eval passes the candidate root through `ORACLE_ROOT` instead.
 Gotcha: Without import following, ad-hoc checks on a diff mostly come back unsure: the model sees only the changed file.
+Gotcha: TypeSafe's long context is a request header (`TypeSafe-Danger-Zone-Long-Context: true`), not a model ID; it works on `jev-1.13.0` and raises both limits to 262k tokens at the same price. A 159k-token request answered in 2.5 s.
+Gotcha: Wide evidence makes Jev miss bugs. On a Unity game's core assembly (C#, 60 files, 159k tokens) cleared a planted day-rollover bug with P(supported) 1.00 that a 23k-token feature scope kept unsure. Keep scopes feature-sized; `--long-context` is for evidence that does not fit.
+Gotcha: `estimateTokens` (bytes/3) overestimates C# by about 18% (187.7k estimated, 158.8k billed). The default 64 KiB `max_state_bytes` is reached before 32k tokens on C#: three Core folders (73 KB, 25k tokens) are over budget without `--long-context`.
+Gotcha: Ad-hoc checks on C# read only the changed files: `using` directives are not followed, so a diff-only check comes back unknown for anything in another file. Pass `--scope` or write contracts.
+Gotcha: `--dry-run --long-context` still needs `TYPESAFE_API_KEY` set, because the transport is resolved from the keys and only TypeSafe serves long context.

@@ -2,7 +2,7 @@
 
 Sure checks source code against versioned product expectations written in plain English. A coding agent writes the contracts. A later agent changes code and runs `sure check`. Sure collects a bounded set of relevant source files, asks a decision model fixed questions, and returns JSON diagnostics for the next agent. Go, [ffcli](https://github.com/peterbourgon/ff), CGO-free.
 
-This repository holds only the tool. The evaluation corpus is the separate `sure-eval` repository (`~/work/CLI/sure-eval`): a fixture shop, independent oracles, 40 cases and a harness (`npm run validate`, `npm run eval`).
+This repository holds only the tool. The evaluation corpus is the separate [`sure-eval`](https://github.com/atakankarsli/sure-eval) repository: a fixture shop, independent oracles, 40 cases and a harness (`npm run validate`, `npm run eval`).
 
 ## Read first
 
@@ -27,7 +27,7 @@ Where the ADR and the brief disagree, the ADR wins. Where either disagrees with 
 ## Secrets
 
 - Keys come only from the environment: `AI_GATEWAY_API_KEY`, `TYPESAFE_API_KEY`, `SURE_ANTHROPIC_API_KEY`. The name is fixed per provider; repository config cannot choose it or set an endpoint.
-- Never use `ANTHROPIC_API_KEY` for Sure; exporting it would also change how Claude Code authenticates on the owner's Mac. The owner's dev key is in the macOS Keychain: `export SURE_ANTHROPIC_API_KEY="$(security find-generic-password -s sure-anthropic-api-key -w)"`.
+- Never use `ANTHROPIC_API_KEY` for Sure; exporting it would also change how Claude Code authenticates on the same machine. A keychain entry is a good home for the key: `export SURE_ANTHROPIC_API_KEY="$(security find-generic-password -s sure-anthropic-api-key -w)"`.
 - Never load `.env` files, commit a key, print it, or put it in reports, fixtures, cache entries or recordings. Recordings (`--record`) hold full source and stay local.
 
 ## Layout
@@ -57,7 +57,7 @@ internal/
 
 ## Template: ADC
 
-The architecture comes from `github.com/atakankarsli/adc` (the owner's MIT project; read-only clone at `~/work/Tools/aseprite-cli/reference-repos/adc`, read with `git show origin/main:<path>`). Kept: ffcli, one package per command, a central registry, `--output`, Make targets, CGO-free GoReleaser. Changed: writers and dependencies are injected, no package-global flag state, `os.Exit` only in `main`. Never modify, pull into or push ADC.
+The architecture comes from [`github.com/atakankarsli/adc`](https://github.com/atakankarsli/adc) (the owner's MIT project). Kept: ffcli, one package per command, a central registry, `--output`, Make targets, CGO-free GoReleaser. Changed: writers and dependencies are injected, no package-global flag state, `os.Exit` only in `main`. Never modify, pull into or push ADC.
 
 ## Patterns
 
