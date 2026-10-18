@@ -42,6 +42,9 @@ type Options struct {
 	RecordDir    string
 	ReplayDir    string
 	AssessBase   bool
+	// LongContext asks Jev for its 262k-token limits and raises the evidence
+	// budgets to match.
+	LongContext bool
 	// Adhoc holds checks passed for this run only; AdhocArgv reproduces them
 	// in a recheck command.
 	Adhoc     []contracts.Contract
@@ -50,11 +53,28 @@ type Options struct {
 
 // ProviderSpec is the provider choice after config and flags are merged.
 type ProviderSpec struct {
-	Name      string
-	Transport string
-	Model     string
-	Effort    string
-	BaseURL   string
+	Name        string
+	Transport   string
+	Model       string
+	Effort      string
+	BaseURL     string
+	LongContext bool
+}
+
+// Long-context floors: TypeSafe accepts 262k tokens per request and per
+// question with the header on, and three bytes per token leaves room for the
+// questions. Explicit larger limits in the trusted config still win.
+const (
+	LongContextStateBytes      = 640 << 10
+	LongContextRequestBytes    = 768 << 10
+	LongContextEstimatedTokens = 240_000
+)
+
+func longContextLimits(l contracts.Limits) contracts.Limits {
+	l.MaxStateBytes = max(l.MaxStateBytes, LongContextStateBytes)
+	l.MaxRequestBytes = max(l.MaxRequestBytes, LongContextRequestBytes)
+	l.MaxEstimatedTokens = max(l.MaxEstimatedTokens, LongContextEstimatedTokens)
+	return l
 }
 
 // Factory builds providers. Identity must work without credentials so plans
@@ -180,6 +200,21 @@ func prepare(ctx context.Context, opts Options, deps Deps) (*prepared, error) {
 		return nil, err
 	}
 
+	p.spec = ProviderSpec{
+		Name:        p.trusted.Config.Provider.Name,
+		Transport:   p.trusted.Config.Provider.Transport,
+		Model:       p.trusted.Config.Provider.Model,
+		Effort:      p.trusted.Config.Provider.Effort,
+		BaseURL:     deps.Getenv("SURE_PROVIDER_BASE_URL"),
+		LongContext: p.trusted.Config.Provider.LongContext || opts.LongContext,
+	}
+	if opts.Provider != "" && opts.Provider != provider.NameReplay && opts.Provider != p.trusted.Config.Provider.Name {
+		p.spec = ProviderSpec{Name: opts.Provider, BaseURL: p.spec.BaseURL, LongContext: opts.LongContext}
+	}
+	if p.spec.LongContext {
+		p.trusted.Config.Limits = longContextLimits(p.trusted.Config.Limits)
+	}
+
 	cfg := p.trusted.Config
 	if p.snap, err = evidence.Capture(ctx, repo.Worktree(), cfg); err != nil {
 		if ctx.Err() != nil {
@@ -195,16 +230,6 @@ func prepare(ctx context.Context, opts Options, deps Deps) (*prepared, error) {
 		return nil, err
 	}
 
-	p.spec = ProviderSpec{
-		Name:      cfg.Provider.Name,
-		Transport: cfg.Provider.Transport,
-		Model:     cfg.Provider.Model,
-		Effort:    cfg.Provider.Effort,
-		BaseURL:   deps.Getenv("SURE_PROVIDER_BASE_URL"),
-	}
-	if opts.Provider != "" && opts.Provider != provider.NameReplay && opts.Provider != cfg.Provider.Name {
-		p.spec = ProviderSpec{Name: opts.Provider, BaseURL: p.spec.BaseURL}
-	}
 	if p.identity, err = deps.Factory.Identity(p.spec); err != nil {
 		return nil, fail("invalid_provider", report.ExitUsage, "%v", err)
 	}

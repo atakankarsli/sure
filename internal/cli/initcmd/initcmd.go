@@ -47,8 +47,8 @@ provider:
 limits:
   concurrency: 4
   max_file_bytes: 262144
-  max_state_bytes: 65536
-  max_request_bytes: 98304
+  max_state_bytes: 81920
+  max_request_bytes: 122880
   max_estimated_tokens: 30000
 # Unvalidated starting policy; tune only on development data.
 policy:

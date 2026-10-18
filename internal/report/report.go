@@ -117,6 +117,7 @@ type Provider struct {
 	Mode              string   `json:"mode"`
 	PromptVersion     string   `json:"prompt_version"`
 	ProbabilitySource string   `json:"probability_source"`
+	LongContext       bool     `json:"long_context,omitempty"`
 	Usage             Usage    `json:"usage"`
 }
 

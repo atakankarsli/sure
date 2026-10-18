@@ -93,6 +93,7 @@ type Identity struct {
 	Model             string `json:"model"`
 	WireFormat        string `json:"wire_format"`
 	ProbabilitySource string `json:"probability_source"`
+	LongContext       bool   `json:"long_context,omitempty"`
 }
 
 type Provider interface {

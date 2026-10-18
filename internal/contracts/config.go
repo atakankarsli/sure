@@ -25,8 +25,8 @@ const (
 const (
 	DefaultConcurrency        = 4
 	DefaultMaxFileBytes       = 256 << 10
-	DefaultMaxStateBytes      = 64 << 10
-	DefaultMaxRequestBytes    = 96 << 10
+	DefaultMaxStateBytes      = 80 << 10
+	DefaultMaxRequestBytes    = 120 << 10
 	DefaultMaxEstimatedTokens = 30000
 	DefaultPolicyVersion      = "experimental-v1"
 	DefaultMinSelected        = 0.90
@@ -64,10 +64,11 @@ type Config struct {
 }
 
 type ProviderConfig struct {
-	Name      string `json:"name"`
-	Transport string `json:"transport"`
-	Model     string `json:"model"`
-	Effort    string `json:"effort,omitempty"`
+	Name        string `json:"name"`
+	Transport   string `json:"transport"`
+	Model       string `json:"model"`
+	Effort      string `json:"effort,omitempty"`
+	LongContext bool   `json:"long_context,omitempty"`
 }
 
 type Limits struct {
@@ -95,10 +96,11 @@ type rawConfig struct {
 	SourceRoots   []string `yaml:"source_roots"`
 	Exclude       []string `yaml:"exclude"`
 	Provider      struct {
-		Name      string `yaml:"name"`
-		Transport string `yaml:"transport"`
-		Model     string `yaml:"model"`
-		Effort    string `yaml:"effort"`
+		Name        string `yaml:"name"`
+		Transport   string `yaml:"transport"`
+		Model       string `yaml:"model"`
+		Effort      string `yaml:"effort"`
+		LongContext *bool  `yaml:"long_context"`
 	} `yaml:"provider"`
 	Limits struct {
 		Concurrency        *int   `yaml:"concurrency"`
@@ -167,10 +169,11 @@ func ParseConfig(file string, data []byte) (Config, []Issue) {
 		SourceRoots:   raw.SourceRoots,
 		Exclude:       raw.Exclude,
 		Provider: ProviderConfig{
-			Name:      raw.Provider.Name,
-			Transport: raw.Provider.Transport,
-			Model:     raw.Provider.Model,
-			Effort:    raw.Provider.Effort,
+			Name:        raw.Provider.Name,
+			Transport:   raw.Provider.Transport,
+			Model:       raw.Provider.Model,
+			Effort:      raw.Provider.Effort,
+			LongContext: raw.Provider.LongContext != nil && *raw.Provider.LongContext,
 		},
 		Policy: Policy{Version: raw.Policy.Version},
 		Visual: VisualConfig{Manifest: raw.Visual.Manifest},
@@ -219,12 +222,18 @@ func ParseConfig(file string, data []byte) (Config, []Issue) {
 		if cfg.Provider.Effort != "" {
 			add(0, "invalid_config", "provider.effort applies only to the anthropic provider")
 		}
+		if cfg.Provider.LongContext && cfg.Provider.Transport == "gateway" {
+			add(0, "invalid_config", "provider.long_context needs the typesafe transport")
+		}
 	case "anthropic":
 		switch cfg.Provider.Transport {
 		case "", AnthropicTransport:
 			cfg.Provider.Transport = AnthropicTransport
 		default:
 			add(0, "invalid_config", "provider.transport for anthropic must be %q", AnthropicTransport)
+		}
+		if cfg.Provider.LongContext {
+			add(0, "invalid_config", "provider.long_context applies only to the jev provider")
 		}
 		switch cfg.Provider.Effort {
 		case "", "low", "medium", "high", "xhigh", "max":

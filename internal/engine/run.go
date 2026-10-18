@@ -199,6 +199,7 @@ func header(p *prepared) (*report.Snapshot, *report.Trust, *report.Provider) {
 		Mode:              "none",
 		PromptVersion:     PromptVersion,
 		ProbabilitySource: id.ProbabilitySource,
+		LongContext:       id.LongContext,
 	}
 	return snap, trust, prov
 }

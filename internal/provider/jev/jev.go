@@ -33,6 +33,11 @@ const (
 	KeyEnvGateway  = "AI_GATEWAY_API_KEY"
 	KeyEnvTypeSafe = "TYPESAFE_API_KEY"
 
+	// LongContextHeader raises TypeSafe's per-request and per-question limits
+	// from 64k/32k to 262k tokens; TypeSafe documents it as slower and less
+	// accurate. The gateway is not known to forward it.
+	LongContextHeader = "TypeSafe-Danger-Zone-Long-Context"
+
 	maxResponseBytes = 4 << 20
 	maxErrorBytes    = 64 << 10
 	maxExcerptBytes  = 300
@@ -49,17 +54,20 @@ type Config struct {
 	Retry                provider.RetryPolicy
 	AllowInsecureBaseURL bool
 	UserAgent            string
+	// LongContext sends LongContextHeader; typesafe transport only.
+	LongContext bool
 }
 
 type Provider struct {
-	transport string
-	model     string
-	endpoint  string
-	wire      string
-	key       string
-	userAgent string
-	hc        *http.Client
-	retry     provider.RetryPolicy
+	transport   string
+	model       string
+	endpoint    string
+	wire        string
+	key         string
+	userAgent   string
+	longContext bool
+	hc          *http.Client
+	retry       provider.RetryPolicy
 }
 
 func New(cfg Config) (*Provider, error) {
@@ -71,6 +79,12 @@ func New(cfg Config) (*Provider, error) {
 		defURL, defModel, keyEnv, wire = DefaultTypeSafeURL, DefaultTypeSafeModel, KeyEnvTypeSafe, "jev-typesafe-v1"
 	default:
 		return nil, fmt.Errorf("unknown jev transport %q (want %s or %s)", cfg.Transport, TransportGateway, TransportTypeSafe)
+	}
+	if cfg.LongContext {
+		if cfg.Transport != TransportTypeSafe {
+			return nil, fmt.Errorf("long context needs the typesafe transport (set %s)", KeyEnvTypeSafe)
+		}
+		wire += "-long"
 	}
 	key := strings.TrimSpace(cfg.APIKey)
 	if key == "" {
@@ -100,14 +114,15 @@ func New(cfg Config) (*Provider, error) {
 		ua = "sure"
 	}
 	return &Provider{
-		transport: cfg.Transport,
-		model:     model,
-		endpoint:  endpoint,
-		wire:      wire,
-		key:       key,
-		userAgent: ua,
-		hc:        hc,
-		retry:     retry,
+		transport:   cfg.Transport,
+		model:       model,
+		endpoint:    endpoint,
+		wire:        wire,
+		key:         key,
+		userAgent:   ua,
+		longContext: cfg.LongContext,
+		hc:          hc,
+		retry:       retry,
 	}, nil
 }
 
@@ -140,6 +155,7 @@ func (p *Provider) Identity() provider.Identity {
 		Model:             p.model,
 		WireFormat:        p.wire,
 		ProbabilitySource: provider.ProbabilityModel,
+		LongContext:       p.longContext,
 	}
 }
 
@@ -248,6 +264,9 @@ func (p *Provider) send(ctx context.Context, req provider.Request, body []byte) 
 	hreq.Header.Set("Content-Type", "application/json")
 	hreq.Header.Set("Accept", "application/json")
 	hreq.Header.Set("User-Agent", p.userAgent)
+	if p.longContext {
+		hreq.Header.Set(LongContextHeader, "true")
+	}
 	if p.transport == TransportGateway {
 		hreq.Header.Set("ai-gateway-protocol-version", "0.0.1")
 		hreq.Header.Set("ai-gateway-auth-method", "api-key")

@@ -33,10 +33,11 @@ func Command(deps shared.Deps) *ffcli.Command {
 	repo := fs.String("repo", ".", "Repository to inspect")
 	prov := fs.String("provider", "", "Provider to inspect: jev or anthropic (default: from config)")
 	live := fs.Bool("live", false, "Send one tiny synthetic request (no source) to verify the key and endpoint")
+	longContext := fs.Bool("long-context", false, "Probe with Jev's long-context header (TypeSafe transport only)")
 	asJSON := fs.Bool("json", false, "Print one JSON document")
 	return &ffcli.Command{
 		Name:       "doctor",
-		ShortUsage: "sure doctor [--live] [--provider jev|anthropic] [--json]",
+		ShortUsage: "sure doctor [--live] [--long-context] [--provider jev|anthropic] [--json]",
 		ShortHelp:  "Check setup: Git, contracts, provider key; --live tests the model.",
 		LongHelp: `Offline by default. With --live, sends one synthetic question that contains
 no source code to the configured provider. Keys are reported as set or unset,
@@ -50,7 +51,7 @@ never printed.`,
 				d.Errors = append(d.Errors, report.Error{Code: "invalid_flags", Message: "unexpected argument " + args[0]})
 				exit = report.ExitUsage
 			} else {
-				exit = diagnose(ctx, deps, *repo, *prov, *live, &d)
+				exit = diagnose(ctx, deps, *repo, *prov, *live, *longContext, &d)
 			}
 			d.ExitCode, d.OK = exit, exit == report.ExitClear
 			if err := shared.Print(deps.Stdout, *asJSON, d, func() string { return human(d, deps.Style()) }); err != nil {
@@ -61,7 +62,7 @@ never printed.`,
 	}
 }
 
-func diagnose(ctx context.Context, deps shared.Deps, dir, provName string, live bool, d *report.Doctor) int {
+func diagnose(ctx context.Context, deps shared.Deps, dir, provName string, live, longContext bool, d *report.Doctor) int {
 	exit := report.ExitClear
 	add := func(name, status, detail string) {
 		d.Checks = append(d.Checks, report.DoctorCheck{Name: name, Status: status, Detail: detail})
@@ -119,12 +120,13 @@ func diagnose(ctx context.Context, deps shared.Deps, dir, provName string, live 
 		}
 	}
 
-	spec := engine.ProviderSpec{Name: contracts.DefaultProviderName, BaseURL: deps.Getenv("SURE_PROVIDER_BASE_URL")}
+	spec := engine.ProviderSpec{Name: contracts.DefaultProviderName, BaseURL: deps.Getenv("SURE_PROVIDER_BASE_URL"), LongContext: longContext}
 	if cfg != nil {
 		spec.Name, spec.Transport, spec.Model, spec.Effort = cfg.Provider.Name, cfg.Provider.Transport, cfg.Provider.Model, cfg.Provider.Effort
+		spec.LongContext = spec.LongContext || cfg.Provider.LongContext
 	}
 	if provName != "" && provName != spec.Name {
-		spec = engine.ProviderSpec{Name: provName, BaseURL: spec.BaseURL}
+		spec = engine.ProviderSpec{Name: provName, BaseURL: spec.BaseURL, LongContext: longContext}
 	}
 	id, err := deps.Factory.Identity(spec)
 	if err != nil {

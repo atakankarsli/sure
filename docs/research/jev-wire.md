@@ -1,10 +1,12 @@
 # Jev wire format
 
-Checked 2026-10-11. Re-check before Milestone 2.
+Checked 2026-10-11; models and long context re-checked 2026-10-18.
 
 ## TypeSafe direct (from docs.typesafe.ai/api)
 
 `POST https://api.typesafe.ai/v1/systemone`, headers `Authorization: Bearer <key>` and `Content-Type: application/json`.
+
+Models (docs.typesafe.ai/models, 2026-10-18): `jev-1.13.0` and `jev-1.14.0` (released 2026-10-14), both $0.042 per million input tokens, 64k tokens per request and 32k per question. Aliases: `jev-latest` → 1.13.0, `jev-preview` → 1.14.0. Long context is not a model: the header `TypeSafe-Danger-Zone-Long-Context: true` raises both limits to 262k tokens on either model at the same price, documented as slower and less accurate. Verified live with a synthetic probe and a 159k-token request (`jev-long-context.md`). Whether the gateway forwards the header is unknown; Sure sends it on the direct transport only.
 
 Request:
 

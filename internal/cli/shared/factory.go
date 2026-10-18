@@ -23,11 +23,12 @@ type ProviderFactory struct {
 const identityKey = "identity-only"
 
 // resolve picks the Jev transport when the config leaves it open: the gateway
-// when its key is set, TypeSafe directly when only that key is set.
+// when its key is set, TypeSafe directly when only that key is set or when
+// long context is on, which only TypeSafe serves.
 func (f ProviderFactory) resolve(spec engine.ProviderSpec) engine.ProviderSpec {
 	if spec.Name == provider.NameJev && spec.Transport == "" {
 		spec.Transport = jev.TransportGateway
-		if f.Getenv(jev.KeyEnvGateway) == "" && f.Getenv(jev.KeyEnvTypeSafe) != "" {
+		if f.Getenv(jev.KeyEnvTypeSafe) != "" && (spec.LongContext || f.Getenv(jev.KeyEnvGateway) == "") {
 			spec.Transport = jev.TransportTypeSafe
 		}
 	}
@@ -77,7 +78,7 @@ func KeyEnv(spec engine.ProviderSpec) string {
 func (f ProviderFactory) build(spec engine.ProviderSpec, key string) (provider.Provider, error) {
 	switch spec.Name {
 	case provider.NameJev:
-		cfg := jev.Config{Transport: spec.Transport, Model: spec.Model, BaseURL: spec.BaseURL, APIKey: key}
+		cfg := jev.Config{Transport: spec.Transport, Model: spec.Model, BaseURL: spec.BaseURL, APIKey: key, LongContext: spec.LongContext}
 		if cfg.Transport == "" {
 			cfg.Transport = jev.TransportGateway
 		}

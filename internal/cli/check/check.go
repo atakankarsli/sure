@@ -36,7 +36,7 @@ type Flags struct {
 	expect, checks, scope                              shared.StringList
 	repo, base, contractsRef, provider, record, replay *string
 	all, dryRun, asJSON, draft, noCache, assessBase    *bool
-	verbose                                            *bool
+	longContext, verbose                               *bool
 	timeout                                            *time.Duration
 }
 
@@ -54,6 +54,7 @@ func Bind(fs *flag.FlagSet) *Flags {
 		draft:        fs.Bool("draft", false, "Use uncommitted contracts (not a protected check)"),
 		contractsRef: fs.String("contracts-ref", "", "Read trusted contracts from this ref"),
 		assessBase:   fs.Bool("assess-base", false, "Also ask about the base to label violations this change introduced"),
+		longContext:  fs.Bool("long-context", false, "Send up to 262k tokens of evidence per check (Jev at TypeSafe only; slower, less accurate)"),
 		timeout:      fs.Duration("timeout", 10*time.Minute, "Deadline for the whole run"),
 		verbose:      fs.Bool("verbose", false, "Print one progress line per contract to stderr"),
 	}
@@ -134,6 +135,7 @@ func (f *Flags) options(args []string) (engine.Options, error) {
 		NoCache:      *f.noCache,
 		RecordDir:    *f.record,
 		AssessBase:   *f.assessBase,
+		LongContext:  *f.longContext,
 	}
 	switch {
 	case len(args) > 0 && *f.all:
@@ -147,6 +149,9 @@ func (f *Flags) options(args []string) (engine.Options, error) {
 	case "", provider.NameJev, provider.NameAnthropic:
 	default:
 		return o, errors.New("--provider must be jev or anthropic")
+	}
+	if o.LongContext && o.Provider == provider.NameAnthropic {
+		return o, errors.New("--long-context applies to the jev provider")
 	}
 	if *f.replay != "" {
 		if o.Provider != "" || o.RecordDir != "" {
